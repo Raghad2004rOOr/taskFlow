@@ -3,10 +3,11 @@
 import { FormEvent, useEffect, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { createUserWithEmailAndPassword, deleteUser, onAuthStateChanged, signInWithEmailAndPassword, updateProfile } from "firebase/auth"
+import { createUserWithEmailAndPassword, deleteUser, GoogleAuthProvider, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, updateProfile } from "firebase/auth"
 import { ArrowLeft, Check, Layers3 } from "lucide-react"
+import { ThemeToggle } from "@/components/theme-toggle"
 import { auth, firebaseReady } from "@/lib/firebase"
-import { createUserProfile } from "@/lib/firestore"
+import { createUserProfile, ensureUserProfile } from "@/lib/firestore"
 
 function readableAuthError(code: string) {
   const messages: Record<string, string> = {
@@ -19,6 +20,10 @@ function readableAuthError(code: string) {
     "auth/too-many-requests": "محاولات كثيرة. انتظر قليلًا ثم أعد المحاولة.",
     "auth/network-request-failed": "تعذّر الاتصال. تحقّق من الإنترنت وحاول مجددًا.",
     "permission-denied": "تعذّر حفظ ملف الحساب في Firestore. راجع قواعد الأمان.",
+    "auth/unauthorized-domain": "هذا النطاق غير مضاف إلى النطاقات المصرّح بها في إعدادات Firebase Authentication.",
+    "auth/popup-blocked": "حُظر تسجيل الدخول المنبثق. اسمح بالنوافذ المنبثقة لهذا الموقع ثم حاول مجددًا.",
+    "auth/popup-closed-by-user": "أُغلقت نافذة Google قبل اكتمال تسجيل الدخول.",
+    "auth/account-exists-with-different-credential": "يوجد حساب بهذا البريد. سجّل الدخول بالطريقة الأصلية أولًا.",
   }
   return messages[code] ?? "حدث خطأ غير متوقع. حاول مرة أخرى."
 }
@@ -35,9 +40,35 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   useEffect(() => {
     if (!auth) return
     return onAuthStateChanged(auth, (user) => {
-      if (user && !registering) router.replace("/")
+      if (user && !registering && !saving && !error) router.replace("/")
     })
-  }, [router, registering])
+  }, [router, registering, saving, error])
+
+  async function handleGoogleSignIn() {
+    setError("")
+    if (!auth) {
+      setError("إعدادات Firebase غير مكتملة. أضف إعدادات تطبيق الويب من Firebase إلى متغيرات البيئة.")
+      return
+    }
+
+    setSaving(true)
+    try {
+      const provider = new GoogleAuthProvider()
+      provider.setCustomParameters({ prompt: "select_account" })
+      const credential = await signInWithPopup(auth, provider)
+      await ensureUserProfile({
+        uid: credential.user.uid,
+        displayName: credential.user.displayName?.trim() || "مستخدم TaskFlow",
+        email: credential.user.email ?? "",
+      })
+      router.replace("/")
+    } catch (cause) {
+      const code = typeof cause === "object" && cause && "code" in cause ? String(cause.code) : "unknown"
+      setError(readableAuthError(code))
+    } finally {
+      setSaving(false)
+    }
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -74,10 +105,13 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
     <main className="auth-layout">
       <section className="auth-panel">
         <div className="auth-content">
-          <Link href="/login" className="auth-brand" aria-label="TaskFlow — الصفحة الرئيسية">
-            <span className="brand-mark"><Layers3 aria-hidden="true" /></span>
-            <span>TaskFlow</span>
-          </Link>
+          <div className="auth-topline">
+            <Link href="/login" className="auth-brand" aria-label="TaskFlow — الصفحة الرئيسية">
+              <span className="brand-mark"><Layers3 aria-hidden="true" /></span>
+              <span>TaskFlow</span>
+            </Link>
+            <ThemeToggle />
+          </div>
           <h1>{registering ? "ابدأ بتنظيم عملك" : "مرحبًا بعودتك"}</h1>
           <p className="auth-subtitle">
             {registering ? "أنشئ حسابك وابدأ التعاون مع فريقك في مساحة واحدة." : "سجّل الدخول لتتابع مشاريعك وما ينتظر فريقك."}
@@ -87,6 +121,11 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
               إعدادات Firebase غير مكتملة. تأكد من إعداد متغيرات Firebase الستة في بيئة المشروع.
             </div>
           )}
+          <button className="google-button" type="button" onClick={handleGoogleSignIn} disabled={saving || !firebaseReady}>
+            <GoogleMark />
+            <span>{saving ? "جارٍ تسجيل الدخول…" : "المتابعة باستخدام Google"}</span>
+          </button>
+          <div className="auth-divider"><span>أو بالبريد الإلكتروني</span></div>
           <form className="form-stack" onSubmit={handleSubmit}>
             {registering && (
               <div className="field">
@@ -123,5 +162,16 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
         <div className="auth-proof"><span className="proof-dot" /><span>مساحة عمل آمنة لفريقك ومشاريعك</span><Check aria-hidden="true" /></div>
       </aside>
     </main>
+  )
+}
+
+function GoogleMark() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 48 48" width="18" height="18">
+      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5Z" transform="translate(0 4)" />
+      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.76 7.18l7.73 6C44.42 38.06 47 31.86 47 24.55Z" />
+      <path fill="#FBBC05" d="M10.53 28.59A14.4 14.4 0 0 1 9.75 24c0-1.59.27-3.12.75-4.59l-7.98-6.19A23.9 23.9 0 0 0 0 24c0 3.87.93 7.52 2.56 10.78l7.97-6.19Z" transform="translate(1 0)" />
+      <path fill="#34A853" d="M24 48c6.48 0 11.94-2.13 15.91-5.8l-7.73-6c-2.14 1.44-4.89 2.3-8.18 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48Z" transform="translate(0 -4)" />
+    </svg>
   )
 }

@@ -24,8 +24,11 @@ import {
   X,
 } from "lucide-react"
 import { auth } from "@/lib/firebase"
+import { NotificationCenter } from "@/components/notification-center"
+import { ThemeToggle } from "@/components/theme-toggle"
 import {
   addProjectMember,
+  createNotification,
   createProject,
   createTask,
   deleteProjectWhenEmpty,
@@ -125,6 +128,14 @@ export function TaskFlowApp({ user }: { user: User }) {
     setToast({ message, error })
   }
 
+  async function sendNotification(recipientUid: string, notification: Parameters<typeof createNotification>[1]) {
+    try {
+      await createNotification(recipientUid, notification)
+    } catch {
+      notify("تم حفظ التغيير، لكن تعذّر إرسال الإشعار.", true)
+    }
+  }
+
   function openProject(projectId: string) {
     setSelectedProjectId(projectId)
     setView("project")
@@ -149,12 +160,24 @@ export function TaskFlowApp({ user }: { user: User }) {
 
   async function saveTask(value: { title: string; description: string; status: TaskStatus; priority: TaskPriority; assigneeId: string | null; dueDate: string | null }) {
     if (!activeProject) return
+    let taskId: string
     if (editingTask) {
-      await updateTask(activeProject.id, editingTask.id, value)
+      taskId = editingTask.id
+      await updateTask(activeProject.id, taskId, value)
       notify("تم تحديث المهمة.")
     } else {
-      await createTask(activeProject.id, user.uid, value)
+      taskId = await createTask(activeProject.id, user.uid, value)
       notify("تمت إضافة المهمة.")
+    }
+    if (value.assigneeId && value.assigneeId !== user.uid && value.assigneeId !== editingTask?.assigneeId) {
+      await sendNotification(value.assigneeId, {
+        type: "task_assigned",
+        title: "أُسندت إليك مهمة",
+        message: `${value.title.trim()} · ${activeProject.name}`,
+        projectId: activeProject.id,
+        taskId,
+        actorId: user.uid,
+      })
     }
     setEditingTask(undefined)
     await mutate()
@@ -206,9 +229,17 @@ export function TaskFlowApp({ user }: { user: User }) {
     if (!activeProject || !memberEmail.trim()) return
     setAddingMember(true)
     try {
-      await addProjectMember(activeProject.id, memberEmail)
+      const addedMember = await addProjectMember(activeProject.id, memberEmail)
       setMemberEmail("")
       notify("تمت إضافة العضو إلى المشروع.")
+      await sendNotification(addedMember.uid, {
+        type: "project_invitation",
+        title: "أُضيفت إلى مشروع",
+        message: activeProject.name,
+        projectId: activeProject.id,
+        taskId: null,
+        actorId: user.uid,
+      })
       await mutate()
     } catch (cause) {
       notify(cause instanceof Error ? cause.message : "تعذّر إضافة العضو.", true)
@@ -272,6 +303,8 @@ export function TaskFlowApp({ user }: { user: User }) {
           <div className="topbar-welcome"><span>مساحة فريقك، في مكان واحد</span><strong>مرحبًا، {user.displayName?.split(" ")[0] || "بك"}</strong></div>
           <div className="topbar-actions">
             <span className="topbar-date">{new Intl.DateTimeFormat("ar-SA-u-ca-gregory", { weekday: "long", day: "numeric", month: "long" }).format(new Date())}</span>
+            <ThemeToggle />
+            <NotificationCenter userId={user.uid} onOpenProject={openProject} />
             <button className="icon-button mobile-signout" type="button" onClick={handleSignOut} aria-label="تسجيل الخروج"><LogOut /></button>
           </div>
         </header>

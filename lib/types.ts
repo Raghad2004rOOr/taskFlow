@@ -37,3 +37,17 @@ export interface UserProfile {
   displayName: string
   email: string
 }
+
+export type NotificationType = "task_assigned" | "project_invitation"
+
+export interface AppNotification {
+  id: string
+  type: NotificationType
+  title: string
+  message: string
+  projectId: string
+  taskId: string | null
+  actorId: string
+  read: boolean
+  createdAt: number
+}

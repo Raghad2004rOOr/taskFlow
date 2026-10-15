@@ -14,6 +14,10 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/projects/$(projectId));
     }
 
+    function assignedTask(projectId, taskId) {
+      return get(/databases/$(database)/documents/projects/$(projectId)/tasks/$(taskId));
+    }
+
     function isProjectMember(projectId) {
       return signedIn()
         && project(projectId).data.memberIds.hasAny([request.auth.uid]);
@@ -22,6 +26,11 @@ service cloud.firestore {
     function isProjectOwner(projectId) {
       return signedIn()
         && project(projectId).data.ownerId == request.auth.uid;
+    }
+
+    function isUserProjectMember(projectId, uid) {
+      return project(projectId).data.memberIds is list
+        && project(projectId).data.memberIds.hasAny([uid]);
     }
 
     function validProject(data) {
@@ -77,6 +86,40 @@ service cloud.firestore {
         && request.resource.data.displayName.size() >= 2
         && request.resource.data.displayName.size() <= 80;
       allow delete: if false;
+
+      match /notifications/{notificationId} {
+        allow get, list: if ownsProfile(uid);
+        allow create: if signedIn()
+          && request.auth.uid != uid
+          && request.resource.data.keys().hasOnly([
+            'type', 'title', 'message', 'projectId', 'taskId', 'actorId', 'read', 'createdAt'
+          ])
+          && request.resource.data.keys().hasAll([
+            'type', 'title', 'message', 'projectId', 'taskId', 'actorId', 'read', 'createdAt'
+          ])
+          && request.resource.data.type in ['task_assigned', 'project_invitation']
+          && request.resource.data.title is string
+          && request.resource.data.title.size() >= 2
+          && request.resource.data.title.size() <= 100
+          && request.resource.data.message is string
+          && request.resource.data.message.size() <= 250
+          && request.resource.data.projectId is string
+          && request.resource.data.actorId == request.auth.uid
+          && request.resource.data.read == false
+          && request.resource.data.createdAt == request.time
+          && ((request.resource.data.type == 'task_assigned'
+              && request.resource.data.taskId is string
+              && assignedTask(request.resource.data.projectId, request.resource.data.taskId).data.assigneeId == uid)
+            || (request.resource.data.type == 'project_invitation'
+              && request.resource.data.taskId == null
+              && isProjectOwner(request.resource.data.projectId)))
+          && isProjectMember(request.resource.data.projectId)
+          && isUserProjectMember(request.resource.data.projectId, uid);
+        allow update: if ownsProfile(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+          && request.resource.data.read is bool;
+        allow delete: if ownsProfile(uid);
+      }
     }
 
     // Direct lookups only: authenticated users can resolve one known UID or email, never list profiles.

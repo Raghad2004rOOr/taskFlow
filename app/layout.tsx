@@ -1,4 +1,6 @@
 import type { Metadata, Viewport } from "next"
+import { cookies } from "next/headers"
+import { ThemeProvider, type Theme } from "@/components/theme-provider"
 import "@/app/globals.css"
 
 export const metadata: Metadata = {
@@ -7,16 +9,22 @@ export const metadata: Metadata = {
   applicationName: "TaskFlow",
 }
 
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  themeColor: "#f7f8fc",
+export async function generateViewport(): Promise<Viewport> {
+  const theme = (await cookies()).get("taskflow-theme")?.value
+  return {
+    width: "device-width",
+    initialScale: 1,
+    themeColor: theme === "dark" ? "#171824" : "#f7f8fc",
+  }
 }
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const savedTheme = (await cookies()).get("taskflow-theme")?.value
+  const initialTheme: Theme = savedTheme === "dark" ? "dark" : "light"
+
   return (
-    <html lang="ar" dir="rtl">
-      <body>{children}</body>
+    <html lang="ar" dir="rtl" data-theme={initialTheme}>
+      <body><ThemeProvider initialTheme={initialTheme}>{children}</ThemeProvider></body>
     </html>
   )
 }

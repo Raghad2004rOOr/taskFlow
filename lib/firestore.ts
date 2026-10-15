@@ -2,9 +2,12 @@ import {
   arrayRemove,
   arrayUnion,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
+  limit,
+  orderBy,
   query,
   runTransaction,
   serverTimestamp,
@@ -16,7 +19,7 @@ import {
   type Timestamp,
 } from "firebase/firestore"
 import { db } from "@/lib/firebase"
-import type { Member, Project, Task, TaskPriority, TaskStatus, UserProfile } from "@/lib/types"
+import type { AppNotification, Member, Project, Task, TaskPriority, TaskStatus, UserProfile } from "@/lib/types"
 
 function database() {
   if (!db) throw new Error("Firebase غير مهيأ. أضف إعدادات Firebase إلى متغيرات البيئة.")
@@ -52,6 +55,14 @@ export async function createUserProfile(profile: UserProfile) {
   batch.set(doc(store, "userDirectory", profile.uid), { uid: profile.uid, displayName: profile.displayName })
   batch.set(doc(store, "memberIndex", emailKey), profile)
   await batch.commit()
+}
+
+export async function ensureUserProfile(profile: UserProfile) {
+  if (!profile.email.trim()) throw new Error("تعذّر الحصول على البريد الإلكتروني من حساب Google.")
+  const store = database()
+  const profileReference = doc(store, "users", profile.uid)
+  const profileDocument = await getDoc(profileReference)
+  if (!profileDocument.exists()) await createUserProfile(profile)
 }
 
 export async function loadWorkspace(uid: string): Promise<Project[]> {
@@ -139,6 +150,7 @@ export async function addProjectMember(projectId: string, email: string) {
       updatedAt: serverTimestamp(),
     })
   })
+  return member
 }
 
 export async function removeProjectMember(projectId: string, memberUid: string, ownerUid: string) {
@@ -165,7 +177,7 @@ export async function createTask(
   projectId: string,
   uid: string,
   input: Pick<Task, "title" | "description" | "status" | "priority" | "assigneeId" | "dueDate">,
-) {
+): Promise<string> {
   const store = database()
   const task = doc(collection(store, "projects", projectId, "tasks"))
   await setDoc(task, {
@@ -176,6 +188,7 @@ export async function createTask(
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   })
+  return task.id
 }
 
 export async function updateTask(
@@ -192,6 +205,53 @@ export async function updateTask(
 }
 
 export async function removeTask(projectId: string, taskId: string) {
-  const { deleteDoc } = await import("firebase/firestore")
   await deleteDoc(doc(database(), "projects", projectId, "tasks", taskId))
+}
+
+export async function createNotification(
+  recipientUid: string,
+  notification: Omit<AppNotification, "id" | "read" | "createdAt">,
+) {
+  if (recipientUid === notification.actorId) return
+  const store = database()
+  const notificationReference = doc(collection(store, "users", recipientUid, "notifications"))
+  await setDoc(notificationReference, { ...notification, read: false, createdAt: serverTimestamp() })
+}
+
+export async function loadNotifications(uid: string): Promise<AppNotification[]> {
+  const store = database()
+  const results = await getDocs(query(
+    collection(store, "users", uid, "notifications"),
+    orderBy("createdAt", "desc"),
+    limit(30),
+  ))
+  return results.docs.map((notificationDocument) => {
+    const data = notificationDocument.data()
+    return {
+      id: notificationDocument.id,
+      type: data.type as AppNotification["type"],
+      title: String(data.title ?? "إشعار جديد"),
+      message: String(data.message ?? ""),
+      projectId: String(data.projectId ?? ""),
+      taskId: typeof data.taskId === "string" ? data.taskId : null,
+      actorId: String(data.actorId ?? ""),
+      read: data.read === true,
+      createdAt: timestampValue(data.createdAt),
+    }
+  })
+}
+
+export async function markNotificationRead(uid: string, notificationId: string) {
+  await updateDoc(doc(database(), "users", uid, "notifications", notificationId), { read: true })
+}
+
+export async function markAllNotificationsRead(uid: string, notificationIds: string[]) {
+  const store = database()
+  for (let start = 0; start < notificationIds.length; start += 450) {
+    const batch = writeBatch(store)
+    notificationIds.slice(start, start + 450).forEach((notificationId) => {
+      batch.update(doc(store, "users", uid, "notifications", notificationId), { read: true })
+    })
+    await batch.commit()
+  }
 }
