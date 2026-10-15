@@ -11,7 +11,7 @@ export function NotificationCenter({ userId, onOpenProject }: { userId: string; 
   const { data: notifications = [], error: loadError, isLoading, mutate } = useSWR<AppNotification[]>(
     `notifications:${userId}`,
     () => loadNotifications(userId),
-    { refreshInterval: 30_000, revalidateOnFocus: true },
+    { refreshInterval: 10_000, revalidateOnFocus: true },
   )
   const [error, setError] = useState("")
   const unreadCount = notifications.filter((notification) => !notification.read).length

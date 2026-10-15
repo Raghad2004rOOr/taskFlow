@@ -84,7 +84,7 @@ export function TaskFlowApp({ user }: { user: User }) {
     () => loadWorkspace(user.uid),
     { revalidateOnFocus: true },
   )
-  const [view, setView] = useState<"overview" | "project">("overview")
+  const [view, setView] = useState<"home" | "projects" | "project">("home")
   const [selectedProjectId, setSelectedProjectId] = useState("")
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
   const [projectEditorId, setProjectEditorId] = useState<string | null>(null)
@@ -182,21 +182,22 @@ export function TaskFlowApp({ user }: { user: User }) {
 
     const notifications: Parameters<typeof createNotifications>[0] = []
     if (isNewTask) {
+      const notification = {
+        type: "task_created" as const,
+        title: "أُضيفت مهمة جديدة",
+        message: `${value.title.trim()} · ${activeProject.name}`,
+        projectId: activeProject.id,
+        taskId,
+        actorId: user.uid,
+      }
+      const ownerUid = activeProject.ownerId
+
+      if (ownerUid !== user.uid && ownerUid !== value.assigneeId) {
+        notifications.push({ recipientUid: ownerUid, notification })
+      }
       activeProject.memberIds
-        .filter((memberUid) => memberUid !== user.uid && memberUid !== value.assigneeId)
-        .forEach((recipientUid) => {
-          notifications.push({
-            recipientUid,
-            notification: {
-              type: "task_created",
-              title: "أُضيفت مهمة جديدة",
-              message: `${value.title.trim()} · ${activeProject.name}`,
-              projectId: activeProject.id,
-              taskId,
-              actorId: user.uid,
-            },
-          })
-        })
+        .filter((memberUid) => memberUid !== user.uid && memberUid !== ownerUid && memberUid !== value.assigneeId)
+        .forEach((recipientUid) => notifications.push({ recipientUid, notification }))
     }
     if (value.assigneeId && value.assigneeId !== user.uid && value.assigneeId !== editingTask?.assigneeId) {
       notifications.push({
@@ -211,7 +212,7 @@ export function TaskFlowApp({ user }: { user: User }) {
         },
       })
     }
-    if (notifications.length) void sendNotifications(notifications)
+    if (notifications.length) await sendNotifications(notifications)
 
     setEditingTask(undefined)
     await mutate()
@@ -249,7 +250,7 @@ export function TaskFlowApp({ user }: { user: User }) {
     if (!activeProject || !window.confirm(`حذف المشروع «${activeProject.name}»؟ لا يمكن حذف مشروع يحتوي على مهام.`)) return
     try {
       await deleteProjectWhenEmpty(activeProject.id)
-      setView("overview")
+      setView("projects")
       setSelectedProjectId("")
       notify("تم حذف المشروع.")
       await mutate()
@@ -311,8 +312,8 @@ export function TaskFlowApp({ user }: { user: User }) {
         <a href="/" className="auth-brand" aria-label="TaskFlow — الرئيسية"><span className="brand-mark"><Layers3 aria-hidden="true" /></span><span>TaskFlow</span></a>
         <p className="workspace-label">مساحة العمل</p>
         <nav className="nav-list" aria-label="التنقل الرئيسي">
-          <button className={`nav-item ${view === "overview" ? "active" : ""}`} onClick={() => setView("overview")}><ListTodo aria-hidden="true" /><span>نظرة عامة</span></button>
-          <button className={`nav-item ${view === "project" ? "active" : ""}`} onClick={() => setView("overview")}><FolderKanban aria-hidden="true" /><span>المشاريع</span><span className="nav-count">{visibleProjects.length}</span></button>
+          <button className={`nav-item ${view === "home" ? "active" : ""}`} onClick={() => setView("home")}><ListTodo aria-hidden="true" /><span>نظرة عامة</span></button>
+          <button className={`nav-item ${view === "projects" || view === "project" ? "active" : ""}`} onClick={() => setView("projects")}><FolderKanban aria-hidden="true" /><span>المشاريع</span><span className="nav-count">{visibleProjects.length}</span></button>
         </nav>
         <p className="workspace-label" style={{ marginTop: 27 }}>مشاريعك</p>
         <nav className="nav-list" aria-label="المشاريع">
@@ -343,11 +344,11 @@ export function TaskFlowApp({ user }: { user: User }) {
           </div>
         </header>
 
-        {view === "overview" ? (
+        {view === "home" ? (
           <>
             <section className="page-heading">
-              <div><h1>نظرة عامة</h1><p>إليك ملخص ما يحدث في مشاريع فريقك اليوم.</p></div>
-              <button className="primary-button" type="button" onClick={() => { setProjectEditorId(null); setProjectDialogOpen(true) }}><Plus aria-hidden="true" /> مشروع جديد</button>
+              <div><h1>نظرة عامة</h1><p>ملخص إنجاز فريقك والمهام التي تحتاج إلى متابعة.</p></div>
+              <button className="primary-button" type="button" onClick={() => setView("projects")}><FolderKanban aria-hidden="true" /> عرض المشاريع</button>
             </section>
             {workspaceError ? (
               <div className="panel error-panel" role="alert"><strong>تعذّر تحميل مساحة العمل</strong><p>تحقّق من اتصال Firebase وقواعد Firestore ثم حاول مجددًا.</p><button className="secondary-button" onClick={() => mutate()}>إعادة المحاولة</button></div>
@@ -359,28 +360,41 @@ export function TaskFlowApp({ user }: { user: User }) {
                   <StatCard icon={<Clock3 />} label="قيد التنفيذ" value={String(inProgressTasks)} detail="مهام يعمل عليها الفريق" tone="amber" />
                   <StatCard icon={<AlertTriangle />} label="متأخرة" value={String(overdueTasks.length)} detail="تحتاج إلى متابعة" tone="rose" />
                 </section>
-                <section className="content-grid">
-                  <div className="panel">
-                    <div className="panel-heading"><div><h2>مشاريعك</h2><p>تابع العمل الجاري في كل مساحة.</p></div><button className="text-link" onClick={() => setProjectDialogOpen(true)}>مشروع جديد</button></div>
-                    {isLoading ? <div className="project-list"><span className="skeleton-block" /><span className="skeleton-block" /></div> : visibleProjects.length ? (
-                      <div className="project-list">
-                        {visibleProjects.map((project) => <ProjectRow key={project.id} project={project} onClick={() => openProject(project.id)} />)}
-                      </div>
-                    ) : <EmptyState icon={<FolderKanban />} title="مساحتك جاهزة" description="أنشئ مشروعك الأول، ثم أضف المهام وادعُ أعضاء فريقك." action={<button className="primary-button" onClick={() => setProjectDialogOpen(true)}><Plus /> إنشاء مشروع</button>} />}
-                  </div>
-                  <div className="panel">
+                <section className="content-grid home-content-grid">
+                  <section className="panel completion-panel" aria-labelledby="completion-heading">
+                    <div className="panel-heading"><div><h2 id="completion-heading">مخطط إنجاز المهام</h2><p>توزيع المهام حسب حالتها في جميع مشاريعك.</p></div><span className="completion-rate">{overallProgress}%<small>مكتمل</small></span></div>
+                    <div className="task-status-chart" role="group" aria-label="مخطط إنجاز المهام حسب الحالة">
+                      <ChartStatusRow label="مكتملة" count={completedTasks} total={totalTasks} status="done" />
+                      <ChartStatusRow label="قيد التنفيذ" count={inProgressTasks} total={totalTasks} status="doing" />
+                      <ChartStatusRow label="قيد الانتظار" count={allTasks.filter((task) => task.status === "todo").length} total={totalTasks} status="todo" />
+                    </div>
+                    <div className="chart-footer"><span>إجمالي المهام</span><strong>{totalTasks}</strong></div>
+                  </section>
+                  <section className="panel">
                     <div className="panel-heading"><div><h2>تحتاج إلى انتباهك</h2><p>المهام التي تجاوزت موعدها.</p></div><span className="stat-icon rose"><CalendarRange aria-hidden="true" /></span></div>
                     {overdueTasks.length ? <div className="task-preview-list">{overdueTasks.slice(0, 5).map((task) => <TaskPreview key={`${task.projectId}-${task.id}`} task={task} onClick={() => openProject(task.projectId)} />)}</div> : <EmptyState icon={<CheckCircle2 />} title="أنت على المسار الصحيح" description="لا توجد مهام متأخرة في مشاريعك." />}
-                    <div className="progress-wrap"><div className="progress-title"><span>إنجاز جميع المهام</span><span>{overallProgress}%</span></div><div className="progress-track" role="progressbar" aria-label="نسبة إنجاز المهام" aria-valuenow={overallProgress} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${overallProgress}%` }} /></div><div className="status-summary"><span><i className="status-dot todo-dot" />قيد الانتظار <strong>{allTasks.filter((task) => task.status === "todo").length}</strong></span><span><i className="status-dot doing-dot" />قيد التنفيذ <strong>{inProgressTasks}</strong></span><span><i className="status-dot done-dot" />مكتملة <strong>{completedTasks}</strong></span></div></div>
-                  </div>
+                  </section>
                 </section>
               </>
+            )}
+          </>
+        ) : view === "projects" ? (
+          <>
+            <section className="page-heading">
+              <div><h1>المشاريع</h1><p>كل المشاريع التي تعمل عليها أنت وفريقك.</p></div>
+              <button className="primary-button" type="button" onClick={() => { setProjectEditorId(null); setProjectDialogOpen(true) }}><Plus aria-hidden="true" /> مشروع جديد</button>
+            </section>
+            {workspaceError ? <div className="panel error-panel" role="alert"><strong>تعذّر تحميل المشاريع</strong><p>تحقّق من اتصال Firebase ثم حاول مجددًا.</p><button className="secondary-button" onClick={() => mutate()}>إعادة المحاولة</button></div> : (
+              <section className="panel projects-page-panel">
+                <div className="panel-heading"><div><h2>قائمة المشاريع</h2><p>{visibleProjects.length} مشاريع في مساحة عملك</p></div><span className="stat-icon"><FolderKanban aria-hidden="true" /></span></div>
+                {isLoading ? <div className="project-list"><span className="skeleton-block" /><span className="skeleton-block" /></div> : visibleProjects.length ? <div className="project-list">{visibleProjects.map((project) => <ProjectRow key={project.id} project={project} onClick={() => openProject(project.id)} />)}</div> : <EmptyState icon={<FolderKanban />} title="مساحتك جاهزة" description="أنشئ مشروعك الأول، ثم أضف المهام وادعُ أعضاء فريقك." action={<button className="primary-button" onClick={() => setProjectDialogOpen(true)}><Plus /> إنشاء مشروع</button>} />}
+              </section>
             )}
           </>
         ) : activeProject ? (
           <>
             <section className="page-heading">
-              <div><button className="back-link" onClick={() => setView("overview")}><ArrowLeft aria-hidden="true" /> كل المشاريع</button><h1>المهام</h1><p>نظّم الأولويات وتابع تقدّم المشروع.</p></div>
+              <div><button className="back-link" onClick={() => setView("projects")}><ArrowLeft aria-hidden="true" /> كل المشاريع</button><h1>المهام</h1><p>نظّم الأولويات وتابع تقدّم المشروع.</p></div>
               <button className="primary-button" type="button" onClick={() => setEditingTask(null)}><Plus aria-hidden="true" /> مهمة جديدة</button>
             </section>
             <section className="selected-project-banner">
@@ -426,6 +440,17 @@ export function TaskFlowApp({ user }: { user: User }) {
 
 function StatCard({ icon, label, value, detail, tone = "" }: { icon: React.ReactNode; label: string; value: string; detail: string; tone?: string }) {
   return <article className="stat-card"><div className="stat-top"><span className="stat-label">{label}</span><span className={`stat-icon ${tone}`}>{icon}</span></div><strong className="stat-value">{value}</strong><span className="stat-foot">{detail}</span></article>
+}
+
+function ChartStatusRow({ label, count, total, status }: { label: string; count: number; total: number; status: "done" | "doing" | "todo" }) {
+  const progress = total ? Math.round((count / total) * 100) : 0
+  return (
+    <div className="chart-status-row">
+      <div className="chart-status-label"><i className={`chart-legend-dot ${status}`} aria-hidden="true" /><span>{label}</span></div>
+      <div className="chart-track" role="progressbar" aria-label={`${label}: ${count} من ${total}`} aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}><span className={`chart-bar ${status}`} style={{ width: `${progress}%` }} /></div>
+      <strong className="chart-count">{count}<small>{progress}%</small></strong>
+    </div>
+  )
 }
 
 function ProjectRow({ project, onClick }: { project: Project; onClick: () => void }) {
