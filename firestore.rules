@@ -1,0 +1,154 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function ownsProfile(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function project(projectId) {
+      return get(/databases/$(database)/documents/projects/$(projectId));
+    }
+
+    function isProjectMember(projectId) {
+      return signedIn()
+        && project(projectId).data.memberIds.hasAny([request.auth.uid]);
+    }
+
+    function isProjectOwner(projectId) {
+      return signedIn()
+        && project(projectId).data.ownerId == request.auth.uid;
+    }
+
+    function validProject(data) {
+      return data.keys().hasAll([
+          'name', 'description', 'ownerId', 'memberIds', 'createdAt', 'updatedAt'
+        ])
+        && data.name is string
+        && data.name.size() >= 3
+        && data.name.size() <= 80
+        && data.description is string
+        && data.description.size() <= 1000
+        && data.ownerId is string
+        && data.memberIds is list
+        && data.memberIds.size() >= 1
+        && data.memberIds.size() <= 50
+        && data.memberIds.hasAll([data.ownerId]);
+    }
+
+    function validTask(data, projectId) {
+      return data.keys().hasAll([
+          'title', 'description', 'status', 'priority', 'assigneeId',
+          'createdBy', 'dueDate', 'createdAt', 'updatedAt'
+        ])
+        && data.title is string
+        && data.title.size() >= 3
+        && data.title.size() <= 120
+        && data.description is string
+        && data.description.size() <= 1000
+        && data.status in ['todo', 'in_progress', 'done']
+        && data.priority in ['low', 'medium', 'high']
+        && data.createdBy is string
+        && (data.dueDate == null || (data.dueDate is string
+          && data.dueDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')))
+        && (data.assigneeId == null
+          || (data.assigneeId is string
+            && project(projectId).data.memberIds.hasAny([data.assigneeId])));
+    }
+
+    match /users/{uid} {
+      allow get: if ownsProfile(uid);
+      allow list: if false;
+      allow create: if ownsProfile(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() >= 2
+        && request.resource.data.displayName.size() <= 80
+        && request.resource.data.createdAt == request.time;
+      allow update: if ownsProfile(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() >= 2
+        && request.resource.data.displayName.size() <= 80;
+      allow delete: if false;
+    }
+
+    // Direct lookups only: authenticated users can resolve one known UID or email, never list profiles.
+    match /userDirectory/{uid} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create, update: if ownsProfile(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() >= 2
+        && request.resource.data.displayName.size() <= 80;
+      allow delete: if false;
+    }
+
+    match /memberIndex/{emailKey} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create, update: if signedIn()
+        && emailKey == request.resource.data.email.lower()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email.lower() == request.auth.token.email.lower()
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() >= 2
+        && request.resource.data.displayName.size() <= 80;
+      allow delete: if false;
+    }
+
+    match /projects/{projectId} {
+      allow get, list: if signedIn()
+        && resource.data.memberIds is list
+        && resource.data.memberIds.hasAny([request.auth.uid]);
+      allow create: if signedIn()
+        && validProject(request.resource.data)
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.memberIds.size() == 1
+        && request.resource.data.memberIds.hasAll([request.auth.uid])
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if isProjectOwner(projectId)
+        && validProject(request.resource.data)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if isProjectOwner(projectId);
+
+      match /tasks/{taskId} {
+        allow get, list: if isProjectMember(projectId);
+        allow create: if isProjectMember(projectId)
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time
+          && validTask(request.resource.data, projectId);
+        allow update: if validTask(request.resource.data, projectId)
+          && request.resource.data.createdBy == resource.data.createdBy
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && (
+            isProjectOwner(projectId)
+            || (
+              isProjectMember(projectId)
+              && (resource.data.createdBy == request.auth.uid
+                || resource.data.assigneeId == request.auth.uid)
+              && request.resource.data.assigneeId == resource.data.assigneeId
+              && (
+                resource.data.assigneeId == request.auth.uid
+                || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+              )
+            )
+          );
+        allow delete: if isProjectOwner(projectId)
+          || (isProjectMember(projectId) && resource.data.createdBy == request.auth.uid);
+      }
+    }
+  }
+}
