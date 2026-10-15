@@ -29,6 +29,7 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import {
   addProjectMember,
   createNotification,
+  createNotifications,
   createProject,
   createTask,
   deleteProjectWhenEmpty,
@@ -136,6 +137,14 @@ export function TaskFlowApp({ user }: { user: User }) {
     }
   }
 
+  async function sendNotifications(notifications: Parameters<typeof createNotifications>[0]) {
+    try {
+      await createNotifications(notifications)
+    } catch {
+      notify("تم حفظ التغيير، لكن تعذّر إرسال الإشعارات.", true)
+    }
+  }
+
   function openProject(projectId: string) {
     setSelectedProjectId(projectId)
     setView("project")
@@ -161,6 +170,7 @@ export function TaskFlowApp({ user }: { user: User }) {
   async function saveTask(value: { title: string; description: string; status: TaskStatus; priority: TaskPriority; assigneeId: string | null; dueDate: string | null }) {
     if (!activeProject) return
     let taskId: string
+    const isNewTask = !editingTask
     if (editingTask) {
       taskId = editingTask.id
       await updateTask(activeProject.id, taskId, value)
@@ -169,16 +179,40 @@ export function TaskFlowApp({ user }: { user: User }) {
       taskId = await createTask(activeProject.id, user.uid, value)
       notify("تمت إضافة المهمة.")
     }
+
+    const notifications: Parameters<typeof createNotifications>[0] = []
+    if (isNewTask) {
+      activeProject.memberIds
+        .filter((memberUid) => memberUid !== user.uid && memberUid !== value.assigneeId)
+        .forEach((recipientUid) => {
+          notifications.push({
+            recipientUid,
+            notification: {
+              type: "task_created",
+              title: "أُضيفت مهمة جديدة",
+              message: `${value.title.trim()} · ${activeProject.name}`,
+              projectId: activeProject.id,
+              taskId,
+              actorId: user.uid,
+            },
+          })
+        })
+    }
     if (value.assigneeId && value.assigneeId !== user.uid && value.assigneeId !== editingTask?.assigneeId) {
-      await sendNotification(value.assigneeId, {
-        type: "task_assigned",
-        title: "أُسندت إليك مهمة",
-        message: `${value.title.trim()} · ${activeProject.name}`,
-        projectId: activeProject.id,
-        taskId,
-        actorId: user.uid,
+      notifications.push({
+        recipientUid: value.assigneeId,
+        notification: {
+          type: "task_assigned",
+          title: "أُسندت إليك مهمة",
+          message: `${value.title.trim()} · ${activeProject.name}`,
+          projectId: activeProject.id,
+          taskId,
+          actorId: user.uid,
+        },
       })
     }
+    if (notifications.length) void sendNotifications(notifications)
+
     setEditingTask(undefined)
     await mutate()
   }

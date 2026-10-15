@@ -38,7 +38,7 @@ export interface UserProfile {
   email: string
 }
 
-export type NotificationType = "task_assigned" | "project_invitation"
+export type NotificationType = "task_assigned" | "task_created" | "project_invitation"
 
 export interface AppNotification {
   id: string

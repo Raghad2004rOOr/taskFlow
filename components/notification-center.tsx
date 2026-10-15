@@ -74,7 +74,7 @@ export function NotificationCenter({ userId, onOpenProject }: { userId: string; 
               ))}
             </ul>
           ) : (
-            <div className="notification-empty"><Inbox aria-hidden="true" /><strong>لا توجد إشعارات بعد</strong><span>ستظهر هنا تنبيهات إسناد المهام وإضافتك إلى المشاريع.</span></div>
+            <div className="notification-empty"><Inbox aria-hidden="true" /><strong>لا توجد إشعارات بعد</strong><span>ستظهر هنا تنبيهات المهام الجديدة وإسنادها وإضافتك إلى المشاريع.</span></div>
           )}
         </section>
       )}

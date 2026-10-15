@@ -97,7 +97,7 @@ service cloud.firestore {
           && request.resource.data.keys().hasAll([
             'type', 'title', 'message', 'projectId', 'taskId', 'actorId', 'read', 'createdAt'
           ])
-          && request.resource.data.type in ['task_assigned', 'project_invitation']
+          && request.resource.data.type in ['task_assigned', 'task_created', 'project_invitation']
           && request.resource.data.title is string
           && request.resource.data.title.size() >= 2
           && request.resource.data.title.size() <= 100
@@ -110,6 +110,9 @@ service cloud.firestore {
           && ((request.resource.data.type == 'task_assigned'
               && request.resource.data.taskId is string
               && assignedTask(request.resource.data.projectId, request.resource.data.taskId).data.assigneeId == uid)
+            || (request.resource.data.type == 'task_created'
+              && request.resource.data.taskId is string
+              && assignedTask(request.resource.data.projectId, request.resource.data.taskId).data.createdBy == request.auth.uid)
             || (request.resource.data.type == 'project_invitation'
               && request.resource.data.taskId == null
               && isProjectOwner(request.resource.data.projectId)))

@@ -70,35 +70,43 @@ export async function loadWorkspace(uid: string): Promise<Project[]> {
   const projectResults = await getDocs(
     query(collection(store, "projects"), where("memberIds", "array-contains", uid)),
   )
+  const projectDocuments = projectResults.docs.map((projectDocument) => ({
+    document: projectDocument,
+    data: projectDocument.data(),
+  }))
+  const memberUids = [...new Set(projectDocuments.flatMap(({ data }) =>
+    Array.isArray(data.memberIds) ? data.memberIds.filter((memberUid): memberUid is string => typeof memberUid === "string") : [],
+  ))]
 
-  return Promise.all(
-    projectResults.docs.map(async (projectDocument) => {
-      const projectData = projectDocument.data()
-      const [taskResults, memberResults] = await Promise.all([
-        getDocs(collection(store, "projects", projectDocument.id, "tasks")),
-        Promise.all(
-          (projectData.memberIds as string[]).map((memberUid) =>
-            getDoc(doc(store, "userDirectory", memberUid)),
-          ),
-        ),
-      ])
-      const members = memberResults
-        .filter((memberDocument) => memberDocument.exists())
-        .map((memberDocument) => memberDocument.data() as Member)
-
-      return {
-        id: projectDocument.id,
-        name: String(projectData.name ?? ""),
-        description: String(projectData.description ?? ""),
-        ownerId: String(projectData.ownerId ?? ""),
-        memberIds: (projectData.memberIds as string[]) ?? [],
-        members,
-        tasks: taskResults.docs.map((taskDocument) => asTask(taskDocument.id, taskDocument.data())),
-        createdAt: timestampValue(projectData.createdAt),
-        updatedAt: timestampValue(projectData.updatedAt),
-      }
-    }),
+  const [taskResultsByProject, memberResults] = await Promise.all([
+    Promise.all(projectDocuments.map(({ document }) =>
+      getDocs(collection(store, "projects", document.id, "tasks")),
+    )),
+    Promise.all(memberUids.map((memberUid) => getDoc(doc(store, "userDirectory", memberUid)))),
+  ])
+  const membersByUid = new Map(
+    memberResults
+      .filter((memberDocument) => memberDocument.exists())
+      .map((memberDocument) => [memberDocument.id, memberDocument.data() as Member]),
   )
+
+  return projectDocuments.map(({ document, data }, index) => {
+    const memberIds = Array.isArray(data.memberIds) ? data.memberIds as string[] : []
+    return {
+      id: document.id,
+      name: String(data.name ?? ""),
+      description: String(data.description ?? ""),
+      ownerId: String(data.ownerId ?? ""),
+      memberIds,
+      members: memberIds.flatMap((memberUid) => {
+        const member = membersByUid.get(memberUid)
+        return member ? [member] : []
+      }),
+      tasks: taskResultsByProject[index].docs.map((taskDocument) => asTask(taskDocument.id, taskDocument.data())),
+      createdAt: timestampValue(data.createdAt),
+      updatedAt: timestampValue(data.updatedAt),
+    }
+  })
 }
 
 export async function createProject(input: { name: string; description: string; uid: string }) {
@@ -212,10 +220,27 @@ export async function createNotification(
   recipientUid: string,
   notification: Omit<AppNotification, "id" | "read" | "createdAt">,
 ) {
-  if (recipientUid === notification.actorId) return
+  await createNotifications([{ recipientUid, notification }])
+}
+
+export async function createNotifications(
+  notifications: Array<{
+    recipientUid: string
+    notification: Omit<AppNotification, "id" | "read" | "createdAt">
+  }>,
+) {
+  const pending = notifications.filter(({ recipientUid, notification }) => recipientUid !== notification.actorId)
+  if (pending.length === 0) return
+
   const store = database()
-  const notificationReference = doc(collection(store, "users", recipientUid, "notifications"))
-  await setDoc(notificationReference, { ...notification, read: false, createdAt: serverTimestamp() })
+  for (let start = 0; start < pending.length; start += 450) {
+    const batch = writeBatch(store)
+    pending.slice(start, start + 450).forEach(({ recipientUid, notification }) => {
+      const notificationReference = doc(collection(store, "users", recipientUid, "notifications"))
+      batch.set(notificationReference, { ...notification, read: false, createdAt: serverTimestamp() })
+    })
+    await batch.commit()
+  }
 }
 
 export async function loadNotifications(uid: string): Promise<AppNotification[]> {
