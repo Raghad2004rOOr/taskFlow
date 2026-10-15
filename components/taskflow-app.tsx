@@ -141,7 +141,7 @@ export function TaskFlowApp({ user }: { user: User }) {
     try {
       await createNotifications(notifications)
     } catch {
-      notify("تم حفظ التغيير، لكن تعذّر إرسال الإشعارات.", true)
+      notify("تم حفظ المهمة، لكن تعذّر إرسال إشعار لمالك المشروع.", true)
     }
   }
 
@@ -192,12 +192,9 @@ export function TaskFlowApp({ user }: { user: User }) {
       }
       const ownerUid = activeProject.ownerId
 
-      if (ownerUid !== user.uid && ownerUid !== value.assigneeId) {
+      if (ownerUid && ownerUid !== user.uid && ownerUid !== value.assigneeId) {
         notifications.push({ recipientUid: ownerUid, notification })
       }
-      activeProject.memberIds
-        .filter((memberUid) => memberUid !== user.uid && memberUid !== ownerUid && memberUid !== value.assigneeId)
-        .forEach((recipientUid) => notifications.push({ recipientUid, notification }))
     }
     if (value.assigneeId && value.assigneeId !== user.uid && value.assigneeId !== editingTask?.assigneeId) {
       notifications.push({

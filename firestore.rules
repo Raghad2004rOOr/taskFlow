@@ -28,6 +28,10 @@ service cloud.firestore {
         && project(projectId).data.ownerId == request.auth.uid;
     }
 
+    function isProjectOwnerUid(projectId, uid) {
+      return project(projectId).data.ownerId == uid;
+    }
+
     function isUserProjectMember(projectId, uid) {
       return project(projectId).data.memberIds is list
         && project(projectId).data.memberIds.hasAny([uid]);
@@ -112,6 +116,7 @@ service cloud.firestore {
               && assignedTask(request.resource.data.projectId, request.resource.data.taskId).data.assigneeId == uid)
             || (request.resource.data.type == 'task_created'
               && request.resource.data.taskId is string
+              && isProjectOwnerUid(request.resource.data.projectId, uid)
               && assignedTask(request.resource.data.projectId, request.resource.data.taskId).data.createdBy == request.auth.uid)
             || (request.resource.data.type == 'project_invitation'
               && request.resource.data.taskId == null
