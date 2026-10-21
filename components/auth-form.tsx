@@ -40,7 +40,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   useEffect(() => {
     if (!auth) return
     return onAuthStateChanged(auth, (user) => {
-      if (user && !registering && !saving && !error) router.replace("/")
+      if (user && !registering && !saving && !error) router.replace("/dashboard")
     })
   }, [router, registering, saving, error])
 
@@ -61,7 +61,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
         displayName: credential.user.displayName?.trim() || "مستخدم TaskFlow",
         email: credential.user.email ?? "",
       })
-      router.replace("/")
+      router.replace("/dashboard")
     } catch (cause) {
       const code = typeof cause === "object" && cause && "code" in cause ? String(cause.code) : "unknown"
       setError(readableAuthError(code))
@@ -92,7 +92,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
       } else {
         await signInWithEmailAndPassword(auth, email.trim(), password)
       }
-      router.replace("/")
+      router.replace("/dashboard")
     } catch (cause) {
       const code = typeof cause === "object" && cause && "code" in cause ? String(cause.code) : "unknown"
       setError(readableAuthError(code))

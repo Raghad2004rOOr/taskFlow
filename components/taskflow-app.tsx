@@ -1,34 +1,18 @@
 "use client"
 
-import { FormEvent, useEffect, useMemo, useState, type DragEvent } from "react"
+import { FormEvent, useEffect, useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
 import useSWR from "swr"
 import { signOut, type User } from "firebase/auth"
-import {
-  AlertTriangle,
-  ArrowLeft,
-  ArrowUpRight,
-  CalendarDays,
-  CalendarRange,
-  CheckCircle2,
-  Clock3,
-  Columns3,
-  FolderKanban,
-  History,
-  Layers3,
-  List,
-  ListChecks,
-  ListTodo,
-  LogOut,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-  UserPlus,
-  X,
-} from "lucide-react"
+import { ArrowLeft, ArrowUpRight, FolderKanban, History, Layers3, ListTodo, LogOut, Pencil, Plus, Trash2 } from "lucide-react"
 import { auth } from "@/lib/firebase"
 import { NotificationCenter } from "@/components/notification-center"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { DashboardStats } from "@/components/dashboard-stats"
+import { FilterBar, type TaskSort } from "@/components/filter-bar"
+import { KanbanBoard } from "@/components/kanban-board"
+import { MembersPanel } from "@/components/members-panel"
+import { TaskList } from "@/components/task-list"
 import {
   addProjectMember,
   createNotification,
@@ -44,70 +28,55 @@ import {
   updateTask,
 } from "@/lib/firestore"
 import type { Project, Task, TaskPriority, TaskStatus } from "@/lib/types"
+import { isOverdue } from "@/lib/dates"
 import { ProjectDialog } from "@/components/project-dialog"
 import { TaskDialog } from "@/components/task-dialog"
 
 const statusLabels: Record<TaskStatus, string> = { todo: "قيد الانتظار", in_progress: "قيد التنفيذ", done: "مكتملة" }
-const priorityLabels: Record<TaskPriority, string> = { low: "منخفضة", medium: "متوسطة", high: "عالية" }
-const statusOptions: Array<{ value: TaskStatus | "all"; label: string }> = [
-  { value: "all", label: "كل الحالات" },
-  { value: "todo", label: "قيد الانتظار" },
-  { value: "in_progress", label: "قيد التنفيذ" },
-  { value: "done", label: "مكتملة" },
-]
-const priorityOptions: Array<{ value: TaskPriority | "all"; label: string }> = [
-  { value: "all", label: "كل الأولويات" },
-  { value: "high", label: "أولوية عالية" },
-  { value: "medium", label: "أولوية متوسطة" },
-  { value: "low", label: "أولوية منخفضة" },
-]
-
-function localDateKey() {
-  const date = new Date()
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
-}
-
-function isOverdue(task: Task) {
-  return Boolean(task.dueDate && task.dueDate < localDateKey() && task.status !== "done")
-}
-
-function formatDate(date: string | null) {
-  if (!date) return "بدون موعد"
-  const [year, month, day] = date.split("-").map(Number)
-  return new Intl.DateTimeFormat("ar-SA-u-ca-gregory", { day: "numeric", month: "short" }).format(new Date(year, month - 1, day))
-}
 
 function initials(name: string) {
   const parts = name.trim().split(/\s+/)
   return `${parts[0]?.[0] ?? "T"}${parts[1]?.[0] ?? ""}`.toUpperCase()
 }
 
-export function TaskFlowApp({ user }: { user: User }) {
+export function TaskFlowApp({ user, projectId }: { user: User; projectId?: string }) {
+  const router = useRouter()
   const { data: projects, error: workspaceError, isLoading, mutate } = useSWR<Project[]>(
     `workspace:${user.uid}`,
     () => loadWorkspace(user.uid),
     { revalidateOnFocus: true },
   )
-  const [view, setView] = useState<"home" | "projects" | "project">("home")
-  const [selectedProjectId, setSelectedProjectId] = useState("")
+  const [view, setView] = useState<"home" | "projects" | "project">(projectId ? "project" : "home")
+  const [selectedProjectId, setSelectedProjectId] = useState(projectId ?? "")
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
   const [projectEditorId, setProjectEditorId] = useState<string | null>(null)
   const [editingTask, setEditingTask] = useState<Task | null | undefined>(undefined)
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<TaskStatus | "all">("all")
+  const [overdueFilter, setOverdueFilter] = useState<"all" | "overdue">("all")
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "all">("all")
   const [assigneeFilter, setAssigneeFilter] = useState("all")
-  const [sortBy, setSortBy] = useState<"due_asc" | "due_desc" | "priority_desc" | "priority_asc">("due_asc")
+  const [sortBy, setSortBy] = useState<TaskSort>("due_asc")
   const [taskView, setTaskView] = useState<"list" | "board">("list")
   const [toast, setToast] = useState<{ message: string; error: boolean } | null>(null)
   const [memberEmail, setMemberEmail] = useState("")
   const [addingMember, setAddingMember] = useState(false)
 
   useEffect(() => {
-    if (projects?.length && !projects.some((project) => project.id === selectedProjectId)) {
+    if (projectId) {
+      setSelectedProjectId(projectId)
+      setView("project")
+    } else {
+      setSelectedProjectId("")
+      setView("home")
+    }
+  }, [projectId])
+
+  useEffect(() => {
+    if (!projectId && projects?.length && !projects.some((project) => project.id === selectedProjectId)) {
       setSelectedProjectId(projects[0].id)
     }
-  }, [projects, selectedProjectId])
+  }, [projectId, projects, selectedProjectId])
 
   useEffect(() => {
     if (!toast) return
@@ -118,17 +87,14 @@ export function TaskFlowApp({ user }: { user: User }) {
   const allTasks = useMemo(() => projects?.flatMap((project) => project.tasks.map((task) => ({ ...task, projectId: project.id, projectName: project.name }))) ?? [], [projects])
   const activeProject = projects?.find((project) => project.id === selectedProjectId)
   const isOwner = activeProject?.ownerId === user.uid
-  const totalTasks = allTasks.length
-  const completedTasks = allTasks.filter((task) => task.status === "done").length
-  const inProgressTasks = allTasks.filter((task) => task.status === "in_progress").length
   const overdueTasks = allTasks.filter(isOverdue)
-  const overallProgress = totalTasks ? Math.round((completedTasks / totalTasks) * 100) : 0
   const filteredTasks = activeProject?.tasks.filter((task) => {
     const matchesSearch = `${task.title} ${task.description}`.toLocaleLowerCase("ar").includes(search.trim().toLocaleLowerCase("ar"))
     const matchesStatus = statusFilter === "all" || task.status === statusFilter
+    const matchesOverdue = overdueFilter === "all" || isOverdue(task)
     const matchesPriority = priorityFilter === "all" || task.priority === priorityFilter
     const matchesAssignee = assigneeFilter === "all" || (assigneeFilter === "unassigned" ? !task.assigneeId : task.assigneeId === assigneeFilter)
-    return matchesSearch && matchesStatus && matchesPriority && matchesAssignee
+    return matchesSearch && matchesStatus && matchesOverdue && matchesPriority && matchesAssignee
   }) ?? []
   const sortedTasks = useMemo(() => {
     const priorityRank: Record<TaskPriority, number> = { low: 1, medium: 2, high: 3 }
@@ -168,8 +134,10 @@ export function TaskFlowApp({ user }: { user: User }) {
   function openProject(projectId: string) {
     setSelectedProjectId(projectId)
     setView("project")
+    router.push(`/projects/${projectId}`)
     setSearch("")
     setStatusFilter("all")
+    setOverdueFilter("all")
     setPriorityFilter("all")
     setAssigneeFilter("all")
   }
@@ -287,6 +255,7 @@ export function TaskFlowApp({ user }: { user: User }) {
       await deleteProjectWhenEmpty(activeProject.id)
       setView("projects")
       setSelectedProjectId("")
+      router.push("/dashboard")
       notify("تم حذف المشروع.")
       await mutate()
     } catch (cause) {
@@ -347,8 +316,8 @@ export function TaskFlowApp({ user }: { user: User }) {
         <a href="/" className="auth-brand" aria-label="TaskFlow — الرئيسية"><span className="brand-mark"><Layers3 aria-hidden="true" /></span><span>TaskFlow</span></a>
         <p className="workspace-label">مساحة العمل</p>
         <nav className="nav-list" aria-label="التنقل الرئيسي">
-          <button className={`nav-item ${view === "home" ? "active" : ""}`} onClick={() => setView("home")}><ListTodo aria-hidden="true" /><span>نظرة عامة</span></button>
-          <button className={`nav-item ${view === "projects" || view === "project" ? "active" : ""}`} onClick={() => setView("projects")}><FolderKanban aria-hidden="true" /><span>المشاريع</span><span className="nav-count">{visibleProjects.length}</span></button>
+          <button className={`nav-item ${view === "home" ? "active" : ""}`} onClick={() => { setView("home"); router.push("/dashboard") }}><ListTodo aria-hidden="true" /><span>نظرة عامة</span></button>
+          <button className={`nav-item ${view === "projects" || view === "project" ? "active" : ""}`} onClick={() => { setView("projects"); router.push("/dashboard") }}><FolderKanban aria-hidden="true" /><span>المشاريع</span><span className="nav-count">{visibleProjects.length}</span></button>
         </nav>
         <p className="workspace-label" style={{ marginTop: 27 }}>مشاريعك</p>
         <nav className="nav-list" aria-label="المشاريع">
@@ -389,27 +358,7 @@ export function TaskFlowApp({ user }: { user: User }) {
               <div className="panel error-panel" role="alert"><strong>تعذّر تحميل مساحة العمل</strong><p>تحقّق من اتصال Firebase وقواعد Firestore ثم حاول مجددًا.</p><button className="secondary-button" onClick={() => mutate()}>إعادة المحاولة</button></div>
             ) : (
               <>
-                <section className="stats-grid" aria-label="ملخص المهام">
-                  <StatCard icon={<FolderKanban />} label="المشاريع" value={String(visibleProjects.length)} detail="المشاريع التي تشارك فيها" />
-                  <StatCard icon={<ListChecks />} label="إجمالي المهام" value={String(totalTasks)} detail="في جميع المشاريع" />
-                  <StatCard icon={<Clock3 />} label="قيد التنفيذ" value={String(inProgressTasks)} detail="مهام يعمل عليها الفريق" tone="amber" />
-                  <StatCard icon={<AlertTriangle />} label="متأخرة" value={String(overdueTasks.length)} detail="تحتاج إلى متابعة" tone="rose" />
-                </section>
-                <section className="content-grid home-content-grid">
-                  <section className="panel completion-panel" aria-labelledby="completion-heading">
-                    <div className="panel-heading"><div><h2 id="completion-heading">مخطط إنجاز المهام</h2><p>توزيع المهام حسب حالتها في جميع مشاريعك.</p></div><span className="completion-rate">{overallProgress}%<small>مكتمل</small></span></div>
-                    <div className="task-status-chart" role="group" aria-label="مخطط إنجاز المهام حسب الحالة">
-                      <ChartStatusRow label="مكتملة" count={completedTasks} total={totalTasks} status="done" />
-                      <ChartStatusRow label="قيد التنفيذ" count={inProgressTasks} total={totalTasks} status="doing" />
-                      <ChartStatusRow label="قيد الانتظار" count={allTasks.filter((task) => task.status === "todo").length} total={totalTasks} status="todo" />
-                    </div>
-                    <div className="chart-footer"><span>إجمالي المهام</span><strong>{totalTasks}</strong></div>
-                  </section>
-                  <section className="panel">
-                    <div className="panel-heading"><div><h2>تحتاج إلى انتباهك</h2><p>المهام التي تجاوزت موعدها.</p></div><span className="stat-icon rose"><CalendarRange aria-hidden="true" /></span></div>
-                    {overdueTasks.length ? <div className="task-preview-list">{overdueTasks.slice(0, 5).map((task) => <TaskPreview key={`${task.projectId}-${task.id}`} task={task} onClick={() => openProject(task.projectId)} />)}</div> : <EmptyState icon={<CheckCircle2 />} title="أنت على المسار الصحيح" description="لا توجد مهام متأخرة في مشاريعك." />}
-                  </section>
-                </section>
+                <DashboardStats projectCount={visibleProjects.length} tasks={allTasks} overdueTasks={overdueTasks} onOpenProject={openProject} />
               </>
             )}
           </>
@@ -429,7 +378,7 @@ export function TaskFlowApp({ user }: { user: User }) {
         ) : activeProject ? (
           <>
             <section className="page-heading">
-              <div><button className="back-link" onClick={() => setView("projects")}><ArrowLeft aria-hidden="true" /> كل المشاريع</button><h1>المهام</h1><p>نظّم الأولويات وتابع تقدّم المشروع.</p></div>
+              <div><button className="back-link" onClick={() => { setView("projects"); router.push("/dashboard") }}><ArrowLeft aria-hidden="true" /> كل المشاريع</button><h1>المهام</h1><p>نظّم الأولويات وتابع تقدّم المشروع.</p></div>
               <button className="primary-button" type="button" onClick={() => setEditingTask(null)}><Plus aria-hidden="true" /> مهمة جديدة</button>
             </section>
             <section className="selected-project-banner">
@@ -440,37 +389,19 @@ export function TaskFlowApp({ user }: { user: User }) {
               </div>
               {isOwner && <div className="project-settings"><button className="icon-button" aria-label="تعديل المشروع" title="تعديل المشروع" onClick={() => { setProjectEditorId(activeProject.id); setProjectDialogOpen(true) }}><Pencil /></button><button className="icon-button danger-icon" aria-label="حذف المشروع" title="حذف المشروع" onClick={deleteCurrentProject}><Trash2 /></button></div>}
             </section>
-            <section className="filters-bar" aria-label="تصفية المهام">
-              <label className="search-control"><Search aria-hidden="true" /><span className="sr-only">البحث في المهام</span><input type="search" placeholder="ابحث عن مهمة…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-              <label><span className="sr-only">تصفية حسب الحالة</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as TaskStatus | "all")}>{statusOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>
-              <label><span className="sr-only">تصفية حسب الأولوية</span><select value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value as TaskPriority | "all")}>{priorityOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>
-              <label><span className="sr-only">تصفية حسب المسؤول</span><select value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)}><option value="all">كل المسؤولين</option><option value="unassigned">غير معيّنة</option>{activeProject.members.map((member) => <option key={member.uid} value={member.uid}>{member.displayName}</option>)}</select></label>
-              <label><span className="sr-only">ترتيب المهام</span><select value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)}><option value="due_asc">الموعد: الأقرب أولًا</option><option value="due_desc">الموعد: الأبعد أولًا</option><option value="priority_desc">الأولوية: الأعلى أولًا</option><option value="priority_asc">الأولوية: الأقل أولًا</option></select></label>
-              <div className="inline-flex min-h-10 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] p-0.5" role="group" aria-label="طريقة عرض المهام">
-                <button type="button" className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 text-[10px] ${taskView === "list" ? "bg-[var(--brand-soft)] font-bold text-[var(--brand)]" : "text-[var(--muted)]"}`} onClick={() => setTaskView("list")} aria-pressed={taskView === "list"}><List className="size-3.5" aria-hidden="true" /><span>قائمة</span></button>
-                <button type="button" className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 text-[10px] ${taskView === "board" ? "bg-[var(--brand-soft)] font-bold text-[var(--brand)]" : "text-[var(--muted)]"}`} onClick={() => setTaskView("board")} aria-pressed={taskView === "board"}><Columns3 className="size-3.5" aria-hidden="true" /><span>كانبان</span></button>
-              </div>
-            </section>
+            <FilterBar project={activeProject} search={search} onSearchChange={setSearch} statusFilter={statusFilter} onStatusChange={setStatusFilter} overdueFilter={overdueFilter} onOverdueChange={setOverdueFilter} priorityFilter={priorityFilter} onPriorityChange={setPriorityFilter} assigneeFilter={assigneeFilter} onAssigneeChange={setAssigneeFilter} sortBy={sortBy} onSortChange={setSortBy} taskView={taskView} onTaskViewChange={setTaskView} />
             {workspaceError ? <div className="notice" role="alert">تعذّر تحديث المهام. تحقّق من اتصال Firebase.</div> : isLoading ? <div className="task-list"><span className="skeleton-block" /><span className="skeleton-block" /></div> : sortedTasks.length ? (
               taskView === "board" ? (
                 <KanbanBoard tasks={sortedTasks} project={activeProject} currentUid={user.uid} isOwner={Boolean(isOwner)} onMoveTask={moveTask} onToggleTask={toggleTask} onEditTask={setEditingTask} onDeleteTask={deleteCurrentTask} />
               ) : (
-                <section className="task-list" aria-label="قائمة المهام">
-                  {sortedTasks.map((task) => <TaskCard key={task.id} task={task} project={activeProject} currentUid={user.uid} isOwner={Boolean(isOwner)} onToggle={() => toggleTask(task)} onEdit={() => setEditingTask(task)} onDelete={() => deleteCurrentTask(task)} />)}
-                </section>
+                <TaskList tasks={sortedTasks} project={activeProject} currentUid={user.uid} isOwner={Boolean(isOwner)} onToggle={toggleTask} onEdit={setEditingTask} onDelete={deleteCurrentTask} />
               )
             ) : <div className="panel"><EmptyState icon={<ListTodo />} title={activeProject.tasks.length ? "لا توجد نتائج مطابقة" : "ابدأ بأول مهمة"} description={activeProject.tasks.length ? "جرّب تغيير البحث أو عوامل التصفية." : "أضف أول مهمة لهذا المشروع لتبدأ متابعة التقدّم."} action={!activeProject.tasks.length ? <button className="primary-button" onClick={() => setEditingTask(null)}><Plus /> إضافة مهمة</button> : undefined} /></div>}
-            <section className="member-box">
-              <div className="panel-heading"><div><h3>أعضاء المشروع</h3><p>الأعضاء الحاليون لديهم وصول إلى مهام المشروع.</p></div><span className="stat-icon"><UserPlus aria-hidden="true" /></span></div>
-              <div className="member-management">
-                {activeProject.members.map((member) => (
-                  <div className="member-line" key={member.uid}><span className="avatar">{initials(member.displayName)}</span><span>{member.displayName}<small>{member.email || "عضو في المشروع"}{member.uid === activeProject.ownerId ? " · مالك المشروع" : ""}</small></span>{isOwner && member.uid !== activeProject.ownerId && <button className="icon-button danger-icon" aria-label={`إزالة ${member.displayName}`} title="إزالة العضو" onClick={() => handleRemoveMember(member.uid, member.displayName)}><X /></button>}</div>
-                ))}
-              </div>
-              {isOwner && <form className="member-form" onSubmit={handleAddMember}><label className="sr-only" htmlFor="member-email">البريد الإلكتروني للعضو</label><input id="member-email" type="email" maxLength={254} required value={memberEmail} onChange={(event) => setMemberEmail(event.target.value)} placeholder="البريد الإلكتروني للعضو" /><button type="submit" aria-label="إضافة عضو" disabled={addingMember}><UserPlus /></button></form>}
-            </section>
+            <MembersPanel project={activeProject} isOwner={Boolean(isOwner)} memberEmail={memberEmail} onMemberEmailChange={setMemberEmail} addingMember={addingMember} onAddMember={handleAddMember} onRemoveMember={(member) => handleRemoveMember(member.uid, member.displayName)} />
             <ProjectActivityFeed projectId={activeProject.id} currentUid={user.uid} />
           </>
+        ) : view === "project" ? (
+          workspaceError ? <div className="panel error-panel" role="alert">تعذّر التحقق من صلاحية الوصول إلى المشروع.</div> : isLoading ? <div className="panel"><span className="skeleton-block" /></div> : <div className="panel" role="status" dir="rtl">المشروع غير موجود أو لا تملك صلاحية الوصول.</div>
         ) : (
           <section className="page-heading"><div><h1>المشاريع</h1><p>أنشئ مشروعًا أو اختر واحدًا من لوحة التحكم.</p></div><button className="primary-button" onClick={() => { setProjectEditorId(null); setProjectDialogOpen(true) }}><Plus /> مشروع جديد</button></section>
         )}
@@ -483,132 +414,10 @@ export function TaskFlowApp({ user }: { user: User }) {
   )
 }
 
-function StatCard({ icon, label, value, detail, tone = "" }: { icon: React.ReactNode; label: string; value: string; detail: string; tone?: string }) {
-  return <article className="stat-card"><div className="stat-top"><span className="stat-label">{label}</span><span className={`stat-icon ${tone}`}>{icon}</span></div><strong className="stat-value">{value}</strong><span className="stat-foot">{detail}</span></article>
-}
-
-function ChartStatusRow({ label, count, total, status }: { label: string; count: number; total: number; status: "done" | "doing" | "todo" }) {
-  const progress = total ? Math.round((count / total) * 100) : 0
-  return (
-    <div className="chart-status-row">
-      <div className="chart-status-label"><i className={`chart-legend-dot ${status}`} aria-hidden="true" /><span>{label}</span></div>
-      <div className="chart-track" role="progressbar" aria-label={`${label}: ${count} من ${total}`} aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}><span className={`chart-bar ${status}`} style={{ width: `${progress}%` }} /></div>
-      <strong className="chart-count">{count}<small>{progress}%</small></strong>
-    </div>
-  )
-}
-
 function ProjectRow({ project, onClick }: { project: Project; onClick: () => void }) {
   const complete = project.tasks.filter((task) => task.status === "done").length
   const progress = project.tasks.length ? Math.round((complete / project.tasks.length) * 100) : 0
   return <button className="project-row" onClick={onClick}><span className="project-symbol"><FolderKanban aria-hidden="true" /></span><span className="project-main"><strong>{project.name}</strong><span className="project-meta"><span>{project.tasks.length} مهام</span><span>·</span><span>{project.members.length} أعضاء</span></span></span><span className="project-progress" role="progressbar" aria-label={`إنجاز ${project.name}`} aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${progress}%` }} /></span><span className="project-progress-label">{progress}%</span><ArrowUpRight className="row-arrow" aria-hidden="true" /></button>
-}
-
-function TaskPreview({ task, onClick }: { task: Task & { projectId: string; projectName: string }; onClick: () => void }) {
-  return <button className="task-preview" onClick={onClick}><span className="task-preview-check"><AlertTriangle aria-hidden="true" /></span><span className="task-preview-copy"><strong>{task.title}</strong><span>{task.projectName}</span></span><span className="task-deadline overdue">{formatDate(task.dueDate)}</span></button>
-}
-
-function TaskCard({ task, project, currentUid, isOwner, onToggle, onEdit, onDelete, cardClassName = "", draggable = false, onDragStart, onDragEnd }: { task: Task; project: Project; currentUid: string; isOwner: boolean; onToggle: () => void; onEdit: () => void; onDelete: () => void; cardClassName?: string; draggable?: boolean; onDragStart?: (event: DragEvent<HTMLElement>) => void; onDragEnd?: () => void }) {
-  const canEdit = isOwner || task.createdBy === currentUid || task.assigneeId === currentUid
-  const canToggle = isOwner || task.assigneeId === currentUid
-  const assignee = project.members.find((member) => member.uid === task.assigneeId)
-  return (
-    <article className={`task-card ${task.status === "done" ? "is-done" : ""} ${cardClassName}`} draggable={draggable} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-      <input className="task-card-check" type="checkbox" checked={task.status === "done"} disabled={!canToggle} onChange={onToggle} aria-label={`وضع ${task.title} كمكتملة`} />
-      <div className="task-card-body">
-        <h3 className="task-card-title">{task.title}</h3>
-        {task.description && <p className="task-card-description">{task.description}</p>}
-        <div className="task-card-meta"><span className={`pill status-${task.status}`}>{statusLabels[task.status]}</span><span className={`pill priority-${task.priority}`}>أولوية {priorityLabels[task.priority]}</span><span className={`task-card-deadline ${isOverdue(task) ? "overdue" : ""}`}><CalendarDays aria-hidden="true" />{formatDate(task.dueDate)}</span>{assignee && <span className="task-assignee">{assignee.displayName}</span>}</div>
-      </div>
-      {(canEdit || isOwner || task.createdBy === currentUid) && <div className="task-actions">{canEdit && <button className="icon-button" onClick={onEdit} aria-label={`تعديل ${task.title}`} title="تعديل المهمة"><Pencil /></button>}{(isOwner || task.createdBy === currentUid) && <button className="icon-button danger-icon" onClick={onDelete} aria-label={`حذف ${task.title}`} title="حذف المهمة"><Trash2 /></button>}</div>}
-    </article>
-  )
-}
-
-const kanbanColumns: Array<{ status: TaskStatus; label: string }> = [
-  { status: "todo", label: "قيد الانتظار" },
-  { status: "in_progress", label: "قيد التنفيذ" },
-  { status: "done", label: "مكتملة" },
-]
-
-function KanbanBoard({ tasks, project, currentUid, isOwner, onMoveTask, onToggleTask, onEditTask, onDeleteTask }: {
-  tasks: Task[]
-  project: Project
-  currentUid: string
-  isOwner: boolean
-  onMoveTask: (task: Task, status: TaskStatus) => void
-  onToggleTask: (task: Task) => void
-  onEditTask: (task: Task) => void
-  onDeleteTask: (task: Task) => void
-}) {
-  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null)
-
-  function startDragging(event: DragEvent<HTMLElement>, task: Task) {
-    if (!isOwner && task.assigneeId !== currentUid) {
-      event.preventDefault()
-      return
-    }
-    setDraggedTaskId(task.id)
-    event.dataTransfer.effectAllowed = "move"
-    event.dataTransfer.setData("text/plain", task.id)
-  }
-
-  function dropTask(event: DragEvent<HTMLElement>, status: TaskStatus) {
-    event.preventDefault()
-    const taskId = event.dataTransfer.getData("text/plain") || draggedTaskId
-    const task = tasks.find((item) => item.id === taskId)
-    if (task) onMoveTask(task, status)
-    setDraggedTaskId(null)
-  }
-
-  return (
-    <section className="grid w-full grid-cols-[repeat(3,minmax(230px,1fr))] items-start gap-3 overflow-x-auto pb-2" aria-label="لوحة كانبان للمهام">
-      {kanbanColumns.map((column) => {
-        const columnTasks = tasks.filter((task) => task.status === column.status)
-        return (
-          <section
-            className="min-h-[220px] min-w-0 rounded-xl border border-[var(--line)] bg-[var(--canvas)] p-3 transition-colors data-[drop-target=true]:border-[var(--brand)]"
-            data-drop-target={Boolean(draggedTaskId)}
-            key={column.status}
-            aria-labelledby={`kanban-heading-${column.status}`}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={(event) => dropTask(event, column.status)}
-          >
-            <header className="mb-2.5 flex items-center justify-between gap-2">
-              <h2 className="m-0 text-xs font-semibold" id={`kanban-heading-${column.status}`}>{column.label}</h2>
-              <span className="grid size-[23px] place-items-center rounded-lg bg-[var(--surface)] px-1.5 text-[10px] font-bold text-[var(--muted)]">{columnTasks.length}</span>
-            </header>
-            <div className="flex flex-col gap-2">
-              {columnTasks.map((task) => (
-                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-2 data-[dragging=true]:opacity-55" data-dragging={draggedTaskId === task.id} key={task.id}>
-                  <TaskCard
-                    task={task}
-                    project={project}
-                    currentUid={currentUid}
-                    isOwner={isOwner}
-                    onToggle={() => onToggleTask(task)}
-                    onEdit={() => onEditTask(task)}
-                    onDelete={() => onDeleteTask(task)}
-                    cardClassName="!cursor-grab !border-0 !bg-transparent !px-0.5 !pb-2 !pt-1 active:!cursor-grabbing"
-                    draggable={isOwner || task.assigneeId === currentUid}
-                    onDragStart={(event) => startDragging(event, task)}
-                    onDragEnd={() => setDraggedTaskId(null)}
-                  />
-                  <label className="block">
-                    <span className="sr-only">تغيير حالة {task.title}</span>
-                    <select className="min-h-8 w-full rounded-lg border border-[var(--line)] bg-[var(--canvas)] px-2 text-[10px] text-[var(--muted)] disabled:opacity-65" value={task.status} disabled={!isOwner && task.assigneeId !== currentUid} onChange={(event) => onMoveTask(task, event.target.value as TaskStatus)}>
-                      {kanbanColumns.map((option) => <option key={option.status} value={option.status}>{option.label}</option>)}
-                    </select>
-                  </label>
-                </div>
-              ))}
-              {!columnTasks.length && <p className="m-0 px-2 py-[18px] text-center text-[10px] text-[var(--muted)]">اسحب مهمة إلى هنا</p>}
-            </div>
-          </section>
-        )
-      })}
-    </section>
-  )
 }
 
 function ProjectActivityFeed({ projectId, currentUid }: { projectId: string; currentUid: string }) {

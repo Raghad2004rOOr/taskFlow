@@ -23,7 +23,7 @@
 }
 
 * { box-sizing: border-box; }
-html { min-width: 320px; background: var(--canvas); }
+html { min-width: 0; background: var(--canvas); }
 body {
   margin: 0;
   color: var(--ink);

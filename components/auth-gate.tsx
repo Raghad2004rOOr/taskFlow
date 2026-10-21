@@ -6,7 +6,7 @@ import { onAuthStateChanged, type User } from "firebase/auth"
 import { auth, firebaseReady } from "@/lib/firebase"
 import { TaskFlowApp } from "@/components/taskflow-app"
 
-export function AuthGate() {
+export function AuthGate({ projectId }: { projectId?: string }) {
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
   const [checking, setChecking] = useState(true)
@@ -40,5 +40,5 @@ export function AuthGate() {
     )
   }
 
-  return user ? <TaskFlowApp user={user} /> : null
+  return user ? <TaskFlowApp user={user} projectId={projectId} /> : null
 }
