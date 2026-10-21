@@ -164,21 +164,23 @@ export async function addProjectMember(projectId: string, email: string) {
 export async function removeProjectMember(projectId: string, memberUid: string, ownerUid: string) {
   if (memberUid === ownerUid) throw new Error("لا يمكن للمالك إزالة نفسه من المشروع.")
   const store = database()
+  const projectReference = doc(store, "projects", projectId)
   const taskResults = await getDocs(collection(store, "projects", projectId, "tasks"))
   const assignedTasks = taskResults.docs.filter((taskDocument) => taskDocument.data().assigneeId === memberUid)
 
-  for (let start = 0; start < assignedTasks.length; start += 450) {
-    const batch = writeBatch(store)
-    assignedTasks.slice(start, start + 450).forEach((taskDocument) => {
-      batch.update(taskDocument.ref, { assigneeId: null, updatedAt: serverTimestamp() })
-    })
-    await batch.commit()
+  if (assignedTasks.length > 499) {
+    throw new Error("لا يمكن إزالة العضو دفعة واحدة لأن عدد مهامه يتجاوز حد Firestore للعملية الواحدة.")
   }
 
-  await updateDoc(doc(store, "projects", projectId), {
+  const batch = writeBatch(store)
+  assignedTasks.forEach((taskDocument) => {
+    batch.update(taskDocument.ref, { assigneeId: null, updatedAt: serverTimestamp() })
+  })
+  batch.update(projectReference, {
     memberIds: arrayRemove(memberUid),
     updatedAt: serverTimestamp(),
   })
+  await batch.commit()
 }
 
 export async function createTask(

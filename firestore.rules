@@ -38,7 +38,10 @@ service cloud.firestore {
     }
 
     function validProject(data) {
-      return data.keys().hasAll([
+      return data.keys().hasOnly([
+          'name', 'description', 'ownerId', 'memberIds', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasAll([
           'name', 'description', 'ownerId', 'memberIds', 'createdAt', 'updatedAt'
         ])
         && data.name is string
@@ -54,7 +57,11 @@ service cloud.firestore {
     }
 
     function validTask(data, projectId) {
-      return data.keys().hasAll([
+      return data.keys().hasOnly([
+          'title', 'description', 'status', 'priority', 'assigneeId',
+          'createdBy', 'dueDate', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasAll([
           'title', 'description', 'status', 'priority', 'assigneeId',
           'createdBy', 'dueDate', 'createdAt', 'updatedAt'
         ])
