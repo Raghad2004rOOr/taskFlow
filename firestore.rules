@@ -200,6 +200,39 @@ service cloud.firestore {
         allow delete: if isProjectOwner(projectId)
           || (isProjectMember(projectId) && resource.data.createdBy == request.auth.uid);
       }
+
+      match /activities/{activityId} {
+        allow get, list: if isProjectMember(projectId);
+        allow create: if isProjectMember(projectId)
+          && request.resource.data.keys().hasOnly([
+            'action', 'taskId', 'taskTitle', 'actorId', 'fromStatus', 'toStatus', 'createdAt'
+          ])
+          && request.resource.data.keys().hasAll([
+            'action', 'taskId', 'taskTitle', 'actorId', 'fromStatus', 'toStatus', 'createdAt'
+          ])
+          && request.resource.data.action in ['created', 'status_changed']
+          && request.resource.data.taskId is string
+          && request.resource.data.taskTitle is string
+          && request.resource.data.taskTitle.size() >= 1
+          && request.resource.data.taskTitle.size() <= 120
+          && request.resource.data.actorId == request.auth.uid
+          && request.resource.data.toStatus in ['todo', 'in_progress', 'done']
+          && request.resource.data.createdAt == request.time
+          && ((request.resource.data.action == 'created'
+              && request.resource.data.fromStatus == null
+              && getAfter(/databases/$(database)/documents/projects/$(projectId)/tasks/$(request.resource.data.taskId)).data.createdBy == request.auth.uid
+              && getAfter(/databases/$(database)/documents/projects/$(projectId)/tasks/$(request.resource.data.taskId)).data.status == request.resource.data.toStatus
+              && getAfter(/databases/$(database)/documents/projects/$(projectId)/tasks/$(request.resource.data.taskId)).data.title == request.resource.data.taskTitle
+              && getAfter(/databases/$(database)/documents/projects/$(projectId)/tasks/$(request.resource.data.taskId)).data.createdAt == request.time)
+            || (request.resource.data.action == 'status_changed'
+              && request.resource.data.fromStatus in ['todo', 'in_progress', 'done']
+              && request.resource.data.fromStatus != request.resource.data.toStatus
+              && get(/databases/$(database)/documents/projects/$(projectId)/tasks/$(request.resource.data.taskId)).data.status == request.resource.data.fromStatus
+              && getAfter(/databases/$(database)/documents/projects/$(projectId)/tasks/$(request.resource.data.taskId)).data.status == request.resource.data.toStatus
+              && getAfter(/databases/$(database)/documents/projects/$(projectId)/tasks/$(request.resource.data.taskId)).data.title == request.resource.data.taskTitle
+              && getAfter(/databases/$(database)/documents/projects/$(projectId)/tasks/$(request.resource.data.taskId)).data.updatedAt == request.time));
+        allow update, delete: if false;
+      }
     }
   }
 }

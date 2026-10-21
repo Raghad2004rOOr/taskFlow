@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useEffect, useMemo, useState } from "react"
+import { FormEvent, useEffect, useMemo, useState, type DragEvent } from "react"
 import useSWR from "swr"
 import { signOut, type User } from "firebase/auth"
 import {
@@ -11,8 +11,11 @@ import {
   CalendarRange,
   CheckCircle2,
   Clock3,
+  Columns3,
   FolderKanban,
+  History,
   Layers3,
+  List,
   ListChecks,
   ListTodo,
   LogOut,
@@ -33,6 +36,7 @@ import {
   createProject,
   createTask,
   deleteProjectWhenEmpty,
+  loadProjectActivity,
   loadWorkspace,
   removeProjectMember,
   removeTask,
@@ -93,6 +97,8 @@ export function TaskFlowApp({ user }: { user: User }) {
   const [statusFilter, setStatusFilter] = useState<TaskStatus | "all">("all")
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "all">("all")
   const [assigneeFilter, setAssigneeFilter] = useState("all")
+  const [sortBy, setSortBy] = useState<"due_asc" | "due_desc" | "priority_desc" | "priority_asc">("due_asc")
+  const [taskView, setTaskView] = useState<"list" | "board">("list")
   const [toast, setToast] = useState<{ message: string; error: boolean } | null>(null)
   const [memberEmail, setMemberEmail] = useState("")
   const [addingMember, setAddingMember] = useState(false)
@@ -124,6 +130,20 @@ export function TaskFlowApp({ user }: { user: User }) {
     const matchesAssignee = assigneeFilter === "all" || (assigneeFilter === "unassigned" ? !task.assigneeId : task.assigneeId === assigneeFilter)
     return matchesSearch && matchesStatus && matchesPriority && matchesAssignee
   }) ?? []
+  const sortedTasks = useMemo(() => {
+    const priorityRank: Record<TaskPriority, number> = { low: 1, medium: 2, high: 3 }
+    return [...filteredTasks].sort((first, second) => {
+      if (sortBy.startsWith("due")) {
+        if (!first.dueDate && !second.dueDate) return 0
+        if (!first.dueDate) return 1
+        if (!second.dueDate) return -1
+        const order = first.dueDate.localeCompare(second.dueDate)
+        return sortBy === "due_asc" ? order : -order
+      }
+      const order = priorityRank[second.priority] - priorityRank[first.priority]
+      return sortBy === "priority_desc" ? order : -order
+    })
+  }, [filteredTasks, sortBy])
 
   function notify(message: string, error = false) {
     setToast({ message, error })
@@ -173,7 +193,7 @@ export function TaskFlowApp({ user }: { user: User }) {
     const isNewTask = !editingTask
     if (editingTask) {
       taskId = editingTask.id
-      await updateTask(activeProject.id, taskId, value)
+      await updateTask(activeProject.id, taskId, value, user.uid, editingTask.status)
       notify("تم تحديث المهمة.")
     } else {
       taskId = await createTask(activeProject.id, user.uid, value)
@@ -225,10 +245,28 @@ export function TaskFlowApp({ user }: { user: User }) {
         priority: task.priority,
         assigneeId: task.assigneeId,
         dueDate: task.dueDate,
-      })
+      }, user.uid, task.status)
       await mutate()
     } catch {
       notify("تعذّر تحديث الحالة. قد لا تملك صلاحية تعديل هذه المهمة.", true)
+    }
+  }
+
+  async function moveTask(task: Task, status: TaskStatus) {
+    if (!activeProject || task.status === status) return
+    try {
+      await updateTask(activeProject.id, task.id, {
+        title: task.title,
+        description: task.description,
+        status,
+        priority: task.priority,
+        assigneeId: task.assigneeId,
+        dueDate: task.dueDate,
+      }, user.uid, task.status)
+      notify(`تم نقل المهمة إلى ${statusLabels[status]}.`)
+      await mutate()
+    } catch {
+      notify("تعذّر تغيير حالة المهمة. تحقّق من صلاحياتك.", true)
     }
   }
 
@@ -407,11 +445,20 @@ export function TaskFlowApp({ user }: { user: User }) {
               <label><span className="sr-only">تصفية حسب الحالة</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as TaskStatus | "all")}>{statusOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>
               <label><span className="sr-only">تصفية حسب الأولوية</span><select value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value as TaskPriority | "all")}>{priorityOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>
               <label><span className="sr-only">تصفية حسب المسؤول</span><select value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)}><option value="all">كل المسؤولين</option><option value="unassigned">غير معيّنة</option>{activeProject.members.map((member) => <option key={member.uid} value={member.uid}>{member.displayName}</option>)}</select></label>
+              <label><span className="sr-only">ترتيب المهام</span><select value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)}><option value="due_asc">الموعد: الأقرب أولًا</option><option value="due_desc">الموعد: الأبعد أولًا</option><option value="priority_desc">الأولوية: الأعلى أولًا</option><option value="priority_asc">الأولوية: الأقل أولًا</option></select></label>
+              <div className="task-view-switch" role="group" aria-label="طريقة عرض المهام">
+                <button type="button" className={taskView === "list" ? "active" : ""} onClick={() => setTaskView("list")} aria-pressed={taskView === "list"}><List aria-hidden="true" /><span>قائمة</span></button>
+                <button type="button" className={taskView === "board" ? "active" : ""} onClick={() => setTaskView("board")} aria-pressed={taskView === "board"}><Columns3 aria-hidden="true" /><span>كانبان</span></button>
+              </div>
             </section>
-            {workspaceError ? <div className="notice" role="alert">تعذّر تحديث المهام. تحقّق من اتصال Firebase.</div> : isLoading ? <div className="task-list"><span className="skeleton-block" /><span className="skeleton-block" /></div> : filteredTasks.length ? (
-              <section className="task-list" aria-label="قائمة المهام">
-                {filteredTasks.map((task) => <TaskCard key={task.id} task={task} project={activeProject} currentUid={user.uid} isOwner={Boolean(isOwner)} onToggle={() => toggleTask(task)} onEdit={() => setEditingTask(task)} onDelete={() => deleteCurrentTask(task)} />)}
-              </section>
+            {workspaceError ? <div className="notice" role="alert">تعذّر تحديث المهام. تحقّق من اتصال Firebase.</div> : isLoading ? <div className="task-list"><span className="skeleton-block" /><span className="skeleton-block" /></div> : sortedTasks.length ? (
+              taskView === "board" ? (
+                <KanbanBoard tasks={sortedTasks} project={activeProject} currentUid={user.uid} isOwner={Boolean(isOwner)} onMoveTask={moveTask} onToggleTask={toggleTask} onEditTask={setEditingTask} onDeleteTask={deleteCurrentTask} />
+              ) : (
+                <section className="task-list" aria-label="قائمة المهام">
+                  {sortedTasks.map((task) => <TaskCard key={task.id} task={task} project={activeProject} currentUid={user.uid} isOwner={Boolean(isOwner)} onToggle={() => toggleTask(task)} onEdit={() => setEditingTask(task)} onDelete={() => deleteCurrentTask(task)} />)}
+                </section>
+              )
             ) : <div className="panel"><EmptyState icon={<ListTodo />} title={activeProject.tasks.length ? "لا توجد نتائج مطابقة" : "ابدأ بأول مهمة"} description={activeProject.tasks.length ? "جرّب تغيير البحث أو عوامل التصفية." : "أضف أول مهمة لهذا المشروع لتبدأ متابعة التقدّم."} action={!activeProject.tasks.length ? <button className="primary-button" onClick={() => setEditingTask(null)}><Plus /> إضافة مهمة</button> : undefined} /></div>}
             <section className="member-box">
               <div className="panel-heading"><div><h3>أعضاء المشروع</h3><p>الأعضاء الحاليون لديهم وصول إلى مهام المشروع.</p></div><span className="stat-icon"><UserPlus aria-hidden="true" /></span></div>
@@ -422,6 +469,7 @@ export function TaskFlowApp({ user }: { user: User }) {
               </div>
               {isOwner && <form className="member-form" onSubmit={handleAddMember}><label className="sr-only" htmlFor="member-email">البريد الإلكتروني للعضو</label><input id="member-email" type="email" maxLength={254} required value={memberEmail} onChange={(event) => setMemberEmail(event.target.value)} placeholder="البريد الإلكتروني للعضو" /><button type="submit" aria-label="إضافة عضو" disabled={addingMember}><UserPlus /></button></form>}
             </section>
+            <ProjectActivityFeed projectId={activeProject.id} currentUid={user.uid} />
           </>
         ) : (
           <section className="page-heading"><div><h1>المشاريع</h1><p>أنشئ مشروعًا أو اختر واحدًا من لوحة التحكم.</p></div><button className="primary-button" onClick={() => { setProjectEditorId(null); setProjectDialogOpen(true) }}><Plus /> مشروع جديد</button></section>
@@ -460,12 +508,12 @@ function TaskPreview({ task, onClick }: { task: Task & { projectId: string; proj
   return <button className="task-preview" onClick={onClick}><span className="task-preview-check"><AlertTriangle aria-hidden="true" /></span><span className="task-preview-copy"><strong>{task.title}</strong><span>{task.projectName}</span></span><span className="task-deadline overdue">{formatDate(task.dueDate)}</span></button>
 }
 
-function TaskCard({ task, project, currentUid, isOwner, onToggle, onEdit, onDelete }: { task: Task; project: Project; currentUid: string; isOwner: boolean; onToggle: () => void; onEdit: () => void; onDelete: () => void }) {
+function TaskCard({ task, project, currentUid, isOwner, onToggle, onEdit, onDelete, draggable = false, onDragStart, onDragEnd }: { task: Task; project: Project; currentUid: string; isOwner: boolean; onToggle: () => void; onEdit: () => void; onDelete: () => void; draggable?: boolean; onDragStart?: (event: DragEvent<HTMLElement>) => void; onDragEnd?: () => void }) {
   const canEdit = isOwner || task.createdBy === currentUid || task.assigneeId === currentUid
   const canToggle = isOwner || task.assigneeId === currentUid
   const assignee = project.members.find((member) => member.uid === task.assigneeId)
   return (
-    <article className={`task-card ${task.status === "done" ? "is-done" : ""}`}>
+    <article className={`task-card ${task.status === "done" ? "is-done" : ""}`} draggable={draggable} onDragStart={onDragStart} onDragEnd={onDragEnd}>
       <input className="task-card-check" type="checkbox" checked={task.status === "done"} disabled={!canToggle} onChange={onToggle} aria-label={`وضع ${task.title} كمكتملة`} />
       <div className="task-card-body">
         <h3 className="task-card-title">{task.title}</h3>
@@ -474,6 +522,125 @@ function TaskCard({ task, project, currentUid, isOwner, onToggle, onEdit, onDele
       </div>
       {(canEdit || isOwner || task.createdBy === currentUid) && <div className="task-actions">{canEdit && <button className="icon-button" onClick={onEdit} aria-label={`تعديل ${task.title}`} title="تعديل المهمة"><Pencil /></button>}{(isOwner || task.createdBy === currentUid) && <button className="icon-button danger-icon" onClick={onDelete} aria-label={`حذف ${task.title}`} title="حذف المهمة"><Trash2 /></button>}</div>}
     </article>
+  )
+}
+
+const kanbanColumns: Array<{ status: TaskStatus; label: string }> = [
+  { status: "todo", label: "قيد الانتظار" },
+  { status: "in_progress", label: "قيد التنفيذ" },
+  { status: "done", label: "مكتملة" },
+]
+
+function KanbanBoard({ tasks, project, currentUid, isOwner, onMoveTask, onToggleTask, onEditTask, onDeleteTask }: {
+  tasks: Task[]
+  project: Project
+  currentUid: string
+  isOwner: boolean
+  onMoveTask: (task: Task, status: TaskStatus) => void
+  onToggleTask: (task: Task) => void
+  onEditTask: (task: Task) => void
+  onDeleteTask: (task: Task) => void
+}) {
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null)
+
+  function startDragging(event: DragEvent<HTMLElement>, task: Task) {
+    if (!isOwner && task.assigneeId !== currentUid) {
+      event.preventDefault()
+      return
+    }
+    setDraggedTaskId(task.id)
+    event.dataTransfer.effectAllowed = "move"
+    event.dataTransfer.setData("text/plain", task.id)
+  }
+
+  function dropTask(event: DragEvent<HTMLElement>, status: TaskStatus) {
+    event.preventDefault()
+    const taskId = event.dataTransfer.getData("text/plain") || draggedTaskId
+    const task = tasks.find((item) => item.id === taskId)
+    if (task) onMoveTask(task, status)
+    setDraggedTaskId(null)
+  }
+
+  return (
+    <section className="kanban-board" aria-label="لوحة كانبان للمهام">
+      {kanbanColumns.map((column) => {
+        const columnTasks = tasks.filter((task) => task.status === column.status)
+        return (
+          <section
+            className={`kanban-column ${draggedTaskId ? "is-drop-target" : ""}`}
+            key={column.status}
+            aria-labelledby={`kanban-heading-${column.status}`}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => dropTask(event, column.status)}
+          >
+            <header className="kanban-column-heading">
+              <h2 id={`kanban-heading-${column.status}`}>{column.label}</h2>
+              <span>{columnTasks.length}</span>
+            </header>
+            <div className="kanban-column-content">
+              {columnTasks.map((task) => (
+                <div className={`kanban-card-wrap ${draggedTaskId === task.id ? "is-dragging" : ""}`} key={task.id}>
+                  <TaskCard
+                    task={task}
+                    project={project}
+                    currentUid={currentUid}
+                    isOwner={isOwner}
+                    onToggle={() => onToggleTask(task)}
+                    onEdit={() => onEditTask(task)}
+                    onDelete={() => onDeleteTask(task)}
+                    draggable={isOwner || task.assigneeId === currentUid}
+                    onDragStart={(event) => startDragging(event, task)}
+                    onDragEnd={() => setDraggedTaskId(null)}
+                  />
+                  <label className="kanban-status-control">
+                    <span className="sr-only">تغيير حالة {task.title}</span>
+                    <select value={task.status} disabled={!isOwner && task.assigneeId !== currentUid} onChange={(event) => onMoveTask(task, event.target.value as TaskStatus)}>
+                      {kanbanColumns.map((option) => <option key={option.status} value={option.status}>{option.label}</option>)}
+                    </select>
+                  </label>
+                </div>
+              ))}
+              {!columnTasks.length && <p className="kanban-empty">اسحب مهمة إلى هنا</p>}
+            </div>
+          </section>
+        )
+      })}
+    </section>
+  )
+}
+
+function ProjectActivityFeed({ projectId, currentUid }: { projectId: string; currentUid: string }) {
+  const { data: activities, error, isLoading } = useSWR(
+    `project-activity:${projectId}`,
+    () => loadProjectActivity(projectId),
+    { revalidateOnFocus: true, refreshInterval: 15000 },
+  )
+
+  return (
+    <section className="activity-box panel" aria-labelledby="activity-heading">
+      <div className="panel-heading">
+        <div><h2 id="activity-heading">سجل النشاط</h2><p>آخر التغييرات على مهام المشروع.</p></div>
+        <span className="stat-icon"><History aria-hidden="true" /></span>
+      </div>
+      {error ? <p className="activity-empty" role="alert">تعذّر تحميل سجل النشاط.</p> : isLoading ? <p className="activity-empty">جارٍ تحميل النشاط…</p> : activities?.length ? (
+        <ol className="activity-list">
+          {activities.map((activity) => {
+            const actionText = activity.action === "created"
+              ? "أنشأ المهمة"
+              : `غيّر الحالة من ${statusLabels[activity.fromStatus ?? "todo"]} إلى ${statusLabels[activity.toStatus]}`
+            return (
+              <li className="activity-item" key={activity.id}>
+                <span className={`activity-marker ${activity.action}`} aria-hidden="true" />
+                <div className="activity-copy">
+                  <p><strong>{activity.actorId === currentUid ? "أنت" : "عضو بالفريق"}</strong> {actionText} <b>{activity.taskTitle}</b></p>
+                  <time dateTime={new Date(activity.createdAt).toISOString()}>{new Intl.DateTimeFormat("ar-SA-u-ca-gregory", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(new Date(activity.createdAt))}</time>
+                </div>
+              </li>
+            )
+          })}
+        </ol>
+      ) : <p className="activity-empty">سيظهر هنا إنشاء المهام وتغيّر حالاتها.</p>}
+    </section>
   )
 }
 

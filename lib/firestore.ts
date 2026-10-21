@@ -19,7 +19,7 @@ import {
   type Timestamp,
 } from "firebase/firestore"
 import { db } from "@/lib/firebase"
-import type { AppNotification, Member, Project, Task, TaskPriority, TaskStatus, UserProfile } from "@/lib/types"
+import type { AppNotification, Member, Project, ProjectActivity, Task, TaskPriority, TaskStatus, UserProfile } from "@/lib/types"
 
 function database() {
   if (!db) throw new Error("Firebase غير مهيأ. أضف إعدادات Firebase إلى متغيرات البيئة.")
@@ -188,14 +188,27 @@ export async function createTask(
 ): Promise<string> {
   const store = database()
   const task = doc(collection(store, "projects", projectId, "tasks"))
-  await setDoc(task, {
+  const activity = doc(collection(store, "projects", projectId, "activities"))
+  const now = serverTimestamp()
+  const batch = writeBatch(store)
+  batch.set(task, {
     ...input,
     title: input.title.trim(),
     description: input.description.trim(),
     createdBy: uid,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+    createdAt: now,
+    updatedAt: now,
   })
+  batch.set(activity, {
+    action: "created",
+    taskId: task.id,
+    taskTitle: input.title.trim(),
+    actorId: uid,
+    fromStatus: null,
+    toStatus: input.status,
+    createdAt: now,
+  })
+  await batch.commit()
   return task.id
 }
 
@@ -203,13 +216,31 @@ export async function updateTask(
   projectId: string,
   taskId: string,
   input: Pick<Task, "title" | "description" | "status" | "priority" | "assigneeId" | "dueDate">,
+  actorUid: string,
+  previousStatus: TaskStatus,
 ) {
-  await updateDoc(doc(database(), "projects", projectId, "tasks", taskId), {
+  const store = database()
+  const taskReference = doc(store, "projects", projectId, "tasks", taskId)
+  const batch = writeBatch(store)
+  batch.update(taskReference, {
     ...input,
     title: input.title.trim(),
     description: input.description.trim(),
     updatedAt: serverTimestamp(),
   })
+  if (previousStatus !== input.status) {
+    const activity = doc(collection(store, "projects", projectId, "activities"))
+    batch.set(activity, {
+      action: "status_changed",
+      taskId,
+      taskTitle: input.title.trim(),
+      actorId: actorUid,
+      fromStatus: previousStatus,
+      toStatus: input.status,
+      createdAt: serverTimestamp(),
+    })
+  }
+  await batch.commit()
 }
 
 export async function removeTask(projectId: string, taskId: string) {
@@ -241,6 +272,27 @@ export async function createNotifications(
     })
     await batch.commit()
   }
+}
+
+export async function loadProjectActivity(projectId: string): Promise<ProjectActivity[]> {
+  const results = await getDocs(query(
+    collection(database(), "projects", projectId, "activities"),
+    orderBy("createdAt", "desc"),
+    limit(30),
+  ))
+  return results.docs.map((activityDocument) => {
+    const data = activityDocument.data()
+    return {
+      id: activityDocument.id,
+      action: data.action as ProjectActivity["action"],
+      taskId: String(data.taskId ?? ""),
+      taskTitle: String(data.taskTitle ?? "مهمة بدون عنوان"),
+      actorId: String(data.actorId ?? ""),
+      fromStatus: data.fromStatus as TaskStatus | null,
+      toStatus: data.toStatus as TaskStatus,
+      createdAt: timestampValue(data.createdAt),
+    }
+  })
 }
 
 export async function loadNotifications(uid: string): Promise<AppNotification[]> {

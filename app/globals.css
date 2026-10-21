@@ -191,6 +191,25 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .search-control input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--ink); }
 .filters-bar select { width: auto; min-width: 122px; height: 40px; padding: 0 11px; color: #6e7488; background: white; border: 1px solid var(--line); border-radius: 10px; }
 .task-list { display: flex; flex-direction: column; gap: 9px; }
+.task-view-switch { display: inline-flex; min-height: 40px; padding: 3px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.task-view-switch button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; color: var(--muted); background: transparent; border: 0; border-radius: 7px; font-size: 10px; }
+.task-view-switch button.active { color: var(--brand); background: var(--brand-soft); font-weight: 750; }
+.task-view-switch svg { width: 14px; height: 14px; }
+.kanban-board { display: grid; grid-template-columns: repeat(3, minmax(230px, 1fr)); align-items: start; gap: 12px; width: 100%; overflow-x: auto; padding-bottom: 8px; }
+.kanban-column { min-width: 0; min-height: 220px; padding: 12px; background: var(--canvas); border: 1px solid var(--line); border-radius: 13px; transition: border-color .18s, background .18s; }
+.kanban-column.is-drop-target { border-color: var(--brand); }
+.kanban-column-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.kanban-column-heading h2 { margin: 0; font-size: 12px; }
+.kanban-column-heading > span { display: grid; place-items: center; min-width: 23px; height: 23px; padding: 0 6px; color: var(--muted); background: var(--surface); border-radius: 8px; font-size: 10px; font-weight: 700; }
+.kanban-column-content { display: flex; flex-direction: column; gap: 8px; }
+.kanban-card-wrap { padding: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 11px; }
+.kanban-card-wrap .task-card { padding: 6px 2px 10px; border: 0; }
+.kanban-card-wrap .task-card[draggable="true"] { cursor: grab; }
+.kanban-card-wrap .task-card[draggable="true"]:active { cursor: grabbing; }
+.kanban-card-wrap.is-dragging { opacity: .55; }
+.kanban-status-control select { width: 100%; min-height: 32px; padding: 0 8px; color: var(--muted); background: var(--canvas); border: 1px solid var(--line); border-radius: 8px; font-size: 10px; }
+.kanban-status-control select:disabled { opacity: .65; }
+.kanban-empty { margin: 0; padding: 18px 8px; color: var(--muted); font-size: 10px; text-align: center; }
 .task-card { display: flex; align-items: flex-start; gap: 12px; padding: 14px; background: white; border: 1px solid #eceef4; border-radius: 13px; }
 .task-card.is-done { opacity: .72; }
 .task-card-check { width: 17px; height: 17px; margin-top: 2px; accent-color: var(--brand); }
@@ -226,6 +245,17 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .member-form button svg { width: 16px; height: 16px; }
 .member-box { margin-top: 17px; padding: 15px; background: white; border: 1px solid #eceef4; border-radius: 14px; }
 .member-box h3 { margin: 0 0 14px; font-size: 12px; }
+.activity-box { margin-top: 17px; }
+.activity-list { display: flex; flex-direction: column; gap: 0; margin: 0; padding: 0; list-style: none; }
+.activity-item { display: flex; align-items: flex-start; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.activity-item:last-child { border-bottom: 0; }
+.activity-marker { flex: 0 0 9px; width: 9px; height: 9px; margin-top: 5px; background: var(--brand); border-radius: 50%; box-shadow: 0 0 0 4px var(--brand-soft); }
+.activity-marker.status_changed { background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
+.activity-copy { min-width: 0; flex: 1; }
+.activity-copy p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.8; overflow-wrap: anywhere; }
+.activity-copy strong, .activity-copy b { color: var(--ink); }
+.activity-copy time { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; }
+.activity-empty { margin: 0; padding: 15px 0 4px; color: var(--muted); font-size: 11px; line-height: 1.7; }
 .project-settings { display: flex; gap: 7px; }
 .empty-state { display: flex; min-height: 160px; flex-direction: column; align-items: center; justify-content: center; padding: 24px; color: var(--muted); text-align: center; }
 .empty-state > span { display: grid; place-items: center; width: 43px; height: 43px; margin-bottom: 12px; color: var(--brand); background: var(--brand-soft); border-radius: 13px; }
@@ -419,6 +449,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 :root[data-theme="dark"] .task-card,
 :root[data-theme="dark"] .project-row,
 :root[data-theme="dark"] .member-line { border-color: var(--line); }
+:root[data-theme="dark"] .task-view-switch,
+:root[data-theme="dark"] .kanban-card-wrap { background-color: var(--surface); border-color: var(--line); }
+:root[data-theme="dark"] .kanban-column { background-color: var(--canvas); border-color: var(--line); }
+:root[data-theme="dark"] .kanban-column-heading > span { background-color: var(--surface); }
+:root[data-theme="dark"] .kanban-status-control select { color: var(--muted); background-color: var(--canvas); border-color: var(--line); }
 
 @media (max-width: 760px) {
   .auth-topline { margin-bottom: 32px; }

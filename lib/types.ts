@@ -38,6 +38,19 @@ export interface UserProfile {
   email: string
 }
 
+export type ActivityAction = "created" | "status_changed"
+
+export interface ProjectActivity {
+  id: string
+  action: ActivityAction
+  taskId: string
+  taskTitle: string
+  actorId: string
+  fromStatus: TaskStatus | null
+  toStatus: TaskStatus
+  createdAt: number
+}
+
 export type NotificationType = "task_assigned" | "task_created" | "project_invitation"
 
 export interface AppNotification {
