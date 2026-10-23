@@ -54,8 +54,8 @@ Two fictional accounts are available for evaluation (they contain no real data):
 
 | Role | Email | Password |
 | --- | --- | --- |
-| Owner | owner@example.test |123456 |
-| Member | member@example.test | قشلاشي |
+| Owner | owner.demo@example.test | Demo-owner-26|
+| Member | member.demo@example.test |Demo-member-26|
 
 To try the permissions: sign in as the owner, create a project and a task, add the member from the project's member panel, then sign in as the member in a second browser window.
 
