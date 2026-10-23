@@ -31,6 +31,7 @@ import type { Project, Task, TaskPriority, TaskStatus } from "@/lib/types"
 import { isOverdue } from "@/lib/dates"
 import { ProjectDialog } from "@/components/project-dialog"
 import { TaskDialog } from "@/components/task-dialog"
+import { useOnlineStatus } from "@/hooks/use-online-status"
 
 const statusLabels: Record<TaskStatus, string> = { todo: "قيد الانتظار", in_progress: "قيد التنفيذ", done: "مكتملة" }
 
@@ -59,6 +60,7 @@ export function TaskFlowApp({ user, projectId }: { user: User; projectId?: strin
   const [sortBy, setSortBy] = useState<TaskSort>("due_asc")
   const [taskView, setTaskView] = useState<"list" | "board">("list")
   const [toast, setToast] = useState<{ message: string; error: boolean } | null>(null)
+  const online = useOnlineStatus()
   const [memberEmail, setMemberEmail] = useState("")
   const [addingMember, setAddingMember] = useState(false)
 
@@ -157,6 +159,7 @@ export function TaskFlowApp({ user, projectId }: { user: User; projectId?: strin
 
   async function saveTask(value: { title: string; description: string; status: TaskStatus; priority: TaskPriority; assigneeId: string | null; dueDate: string | null }) {
     if (!activeProject) return
+    if (!online) throw new Error("لا يوجد اتصال بالإنترنت. لم يتم الحفظ، حاول مجدداً عند عودة الاتصال.")
     let taskId: string
     const isNewTask = !editingTask
     if (editingTask) {
@@ -205,6 +208,7 @@ export function TaskFlowApp({ user, projectId }: { user: User; projectId?: strin
 
   async function toggleTask(task: Task) {
     if (!activeProject) return
+    if (!online) { notify("لا يوجد اتصال بالإنترنت. لم يتم الحفظ.", true); return }
     try {
       await updateTask(activeProject.id, task.id, {
         title: task.title,
@@ -222,6 +226,7 @@ export function TaskFlowApp({ user, projectId }: { user: User; projectId?: strin
 
   async function moveTask(task: Task, status: TaskStatus) {
     if (!activeProject || task.status === status) return
+    if (!online) { notify("لا يوجد اتصال بالإنترنت. لم يتم الحفظ.", true); return }
     try {
       await updateTask(activeProject.id, task.id, {
         title: task.title,
@@ -312,6 +317,11 @@ export function TaskFlowApp({ user, projectId }: { user: User; projectId?: strin
 
   return (
     <div className="app-shell" dir="rtl">
+      {!online && (
+        <div role="alert" style={{ position: "fixed", top: 0, insetInline: 0, zIndex: 100, padding: "8px 16px", textAlign: "center", background: "#b42318", color: "#fff", fontSize: 14 }}>
+          أنت غير متصل بالإنترنت. لن يتم حفظ التغييرات حتى يعود الاتصال.
+        </div>
+      )}
       <aside className="sidebar">
         <a href="/" className="auth-brand" aria-label="TaskFlow — الرئيسية"><span className="brand-mark"><Layers3 aria-hidden="true" /></span><span>TaskFlow</span></a>
         <p className="workspace-label">مساحة العمل</p>
